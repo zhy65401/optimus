@@ -1,0 +1,44 @@
+variables:
+  GIT_SUBMODULE_STRATEGY: recursive
+  PIP_CACHE_DIR: "${CI_PROJECT_DIR}/.cache/pip"
+  PRE_COMMIT_HOME: "${CI_PROJECT_DIR}/.cache/pre-commit"
+  ECHOCOLOR_YELLOW: "\e[1m\e[93m"  # bold light yellow
+  ECHOCOLOR_NORMAL: "\e[0m\e[21m"
+cache:
+  paths:
+    - "${PIP_CACHE_DIR}"
+    - "${PRE_COMMIT_HOME}"
+
+stages:
+  - Static analysis
+
+pre-commit-checks:
+  stage: Static analysis
+  image: python:3.9-slim
+  tags:
+    - ${RUNNER_TAG}
+  before_script:
+    - apt-get update && apt-get install -y git
+    - pip install pre-commit
+    - |
+      echo "Setting up git repository..."
+      git fetch origin
+  script: |
+    exit_code=0
+    pre-commit run --verbose --from-ref "origin/$CI_DEFAULT_BRANCH" --to-ref "$CI_COMMIT_SHA" --show-diff-on-failure --color always || exit_code=$?
+
+    # when there are pre-commit errors detected, prompt the user to fix
+    if [ $exit_code -ne 0 ]; then
+      msg="${ECHOCOLOR_YELLOW}"
+      msg+="\n \n \n>>>>>\n"
+      msg+="Linting errors detected (see diff output above). Please address the issues locally and push "
+      msg+="up the fixed changes. It is recommended you install \`pre-commit\` into your python "
+      msg+="environment (follow the instructions at https://pre-commit.com/) and \`pre-commit install\` "
+      msg+="to install git hooks which will automatically check your code before every commit. "
+      msg+="\n<<<<<\n \n \n${ECHOCOLOR_NORMAL}"
+      echo -e "${msg}"
+      exit $exit_code
+    fi
+  allow_failure: false
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
