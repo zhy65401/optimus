@@ -183,10 +183,10 @@ class Reporter():
             'IV': [Metrics.get_iv(y_true, y_proba)],
         })
         
-    def generate_sample_overview_report(self, writer, res_all, label):
+    def generate_sample_overview_report(self, writer, res_all, label, id_col):
         df_basic_summary = res_all.groupby('sample_type').agg(
-            sample_size=('sample_soa_id', 'count'),
-            sample_size_pct=('sample_soa_id', lambda x: x.count() / res_all.shape[0]),
+            sample_size=(id_col, 'count'),
+            sample_size_pct=(id_col, lambda x: x.count() / res_all.shape[0]),
             earliest_due_date=('due_date', 'min'),
             lastest_due_date=('due_date', 'max'),
             dpd7=('dpd', lambda x: (x >= 7).mean()),
@@ -247,20 +247,16 @@ class Reporter():
             
     def generate_calibration_report(self, writer, calibrate_detail, scorecard):
         calibrate_detail.to_excel(writer, sheet_name='Calibration - Regression', freeze_panes=(1,1))
-        scorecard[0].to_excel(writer, sheet_name='Calibration - Train Score Card', freeze_panes=(1,1))
-        scorecard[1].to_excel(writer, sheet_name='Calibration - Test Score Card', freeze_panes=(1,1))
-        scorecard[2].to_excel(writer, sheet_name='Calibration - OOT Score Card', freeze_panes=(1,1))
-        scorecard[3].to_excel(writer, sheet_name='Calibration - Extra Score Card', freeze_panes=(1,1))
+        for name, df_scorecard in scorecard.items():
+            df_scorecard.to_excel(writer, sheet_name=f'Calibration - {name} Score Card', freeze_panes=(1,1))
+            self._format_calibration_scorecard_df(writer.sheets[f'Calibration - {name} Score Card'])
         self._format_calibration_reg_df(writer.sheets['Calibration - Regression'])
-        self._format_calibration_scorecard_df(writer.sheets['Calibration - Train Score Card'])
-        self._format_calibration_scorecard_df(writer.sheets['Calibration - Test Score Card'])
-        self._format_calibration_scorecard_df(writer.sheets['Calibration - OOT Score Card'])
-        self._format_calibration_scorecard_df(writer.sheets['Calibration - Extra Score Card'])
                 
-    def generate_report(self, performance):
+    def generate_report(self, performance, id_col, **kwargs):
         df_res = performance['df_res']
         writer = pd.ExcelWriter(self.report_path, engine='openpyxl')
-        self.generate_sample_overview_report(writer, performance['df_res'], performance['label'])
+        if kwargs.get("include_overview", True):
+            self.generate_sample_overview_report(writer, df_res, performance['label'], id_col)
         if 'woe_df' in performance:
             for sample_type in performance['woe_df']:
                 X = df_res.loc[df_res['sample_type']==sample_type, performance['original_cols']].copy()
