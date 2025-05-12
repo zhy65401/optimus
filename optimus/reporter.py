@@ -26,11 +26,9 @@ class Reporter():
             worksheet.column_dimensions[col_idx].width = width
             
     def _format_overview_stats_df(self, worksheet):
-        perc_cols = ['C', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
+        perc_cols = ['C', 'D', 'E']
         Reporter._set_col_format(worksheet, perc_cols, '0.000%')
-        w15 = ['F', 'G', 'H', 'I', 'J', 'K', 'L']
         w20 = ['A', 'B', 'C', 'D', 'E']
-        Reporter._set_col_width(worksheet, w15, 15)
         Reporter._set_col_width(worksheet, w20, 20)
         
     def _format_overview_perf_df(self, worksheet):
@@ -72,6 +70,10 @@ class Reporter():
         w40 = ['B']
         Reporter._set_col_width(worksheet, w20, 20)
         Reporter._set_col_width(worksheet, w40, 40)
+        
+    def _format_benchmark_df(self, worksheet):
+        w20 = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+        Reporter._set_col_width(worksheet, w20, 20)
                     
     def _format_tuning_df(self, worksheet):
         perc_cols = ['P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X']
@@ -187,16 +189,8 @@ class Reporter():
         df_basic_summary = res_all.groupby('sample_type').agg(
             sample_size=(id_col, 'count'),
             sample_size_pct=(id_col, lambda x: x.count() / res_all.shape[0]),
-            earliest_due_date=('due_date', 'min'),
-            lastest_due_date=('due_date', 'max'),
-            dpd7=('dpd', lambda x: (x >= 7).mean()),
-            dpd14=('dpd', lambda x: (x >= 14).mean()),
-            dpd30=('dpd', lambda x: (x >= 30).mean()),
-            dpd60=('dpd', lambda x: (x >= 60).mean()),
-            dpd90=('dpd', lambda x: (x >= 90).mean()),
+            positive_rate=(label, lambda x: x.mean()),
         )
-        df_basic_summary['earliest_due_date'] = df_basic_summary['earliest_due_date'].astype(str)
-        df_basic_summary['lastest_due_date'] = df_basic_summary['lastest_due_date'].astype(str)
         if 'score' in res_all.columns:
             df_psi = pd.DataFrame([
                 Metrics.get_psi(res_all[res_all['sample_type']=="train"]['score'], res_all[res_all['sample_type']=="train"]['score']),
@@ -239,11 +233,15 @@ class Reporter():
             else:
                 selector.detail.to_excel(writer, sheet_name=f"Feature Selection - {name}", freeze_panes=(1,1))
                 self._format_feature_selection_df(writer.sheets[f"Feature Selection - {name}"])
+                
+    def generate_benchmark_report(self, writer, benchmark):
+        benchmark.model_detail.to_excel(writer, sheet_name='Model - Benchmark Details', freeze_panes=(1,1))
+        self._format_benchmark_df(writer.sheets['Model - Benchmark Details'])
     
     def generate_model_tuning_report(self, writer, tune_results):
         if tune_results is not None:
-            tune_results.to_excel(writer, sheet_name='Model Tuning', freeze_panes=(1,1))
-            self._format_tuning_df(writer.sheets['Model Tuning'])
+            tune_results.to_excel(writer, sheet_name='Model - Tuning Report', freeze_panes=(1,1))
+            self._format_tuning_df(writer.sheets['Model - Tuning Report'])
             
     def generate_calibration_report(self, writer, calibrate_detail, scorecard):
         calibrate_detail.to_excel(writer, sheet_name='Calibration - Regression', freeze_panes=(1,1))
@@ -255,8 +253,7 @@ class Reporter():
     def generate_report(self, performance, id_col, **kwargs):
         df_res = performance['df_res']
         writer = pd.ExcelWriter(self.report_path, engine='openpyxl')
-        if kwargs.get("include_overview", True):
-            self.generate_sample_overview_report(writer, df_res, performance['label'], id_col)
+        self.generate_sample_overview_report(writer, df_res, performance['label'], id_col)
         if 'woe_df' in performance:
             for sample_type in performance['woe_df']:
                 X = df_res.loc[df_res['sample_type']==sample_type, performance['original_cols']].copy()
@@ -264,6 +261,7 @@ class Reporter():
                 self.generate_single_feature_eda_report(writer, X, y, performance['woe_df'][sample_type], performance['missing_values'], sample_type)
         if 'original_cols' in performance and 'feature_selection' in performance:
             self.generate_feature_selection_report(writer, performance['original_cols'], performance['feature_selection'])
+        self.generate_benchmark_report(writer, performance['benchmark'])
         if 'tune_results' in performance:
             self.generate_model_tuning_report(writer, performance['tune_results'])
         if 'calibrate_detail' in performance and 'scorecard' in performance:
