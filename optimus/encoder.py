@@ -303,7 +303,7 @@ class Encoder(BaseEstimator, TransformerMixin):
             if self._feat_types[feat] == "numerical":
                 binned_data = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
             else:
-                binned_data = X[feat].astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
+                binned_data = X_normal.astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
             
             feat_woe_df = self._stat_feat(binned_data, y_normal, X_missing, y_missing)
             feat_woe_df['bin_strategy'] = self._bin_strategy[feat]
