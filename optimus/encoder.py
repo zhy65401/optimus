@@ -14,7 +14,7 @@ from .binner import QCut, SimpleCut, ChiMergeCut, BestKSCut, WOEMerge
 
 
 class Encoder(BaseEstimator, TransformerMixin):
-    def __init__(self, spec: dict, missing_values: list = None, treat_missing: str = 'mean', copy=True):
+    def __init__(self, spec: dict, missing_values: list = None, treat_missing: str = 'mean', keep_dtypes=False, copy=True):
         """
         Args:
             spec (dict): A dictionary for features and binning strategy. The strategy should be a list or 
@@ -25,6 +25,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         self.bin_info = {}
         self.missing_values = missing_values or [-990000, '__N.A__']
         self.treat_missing = treat_missing
+        self.keep_dtypes = keep_dtypes
         self.copy = copy
         self._bin_strategy = {}
         self._feat_types = {}
@@ -285,7 +286,10 @@ class Encoder(BaseEstimator, TransformerMixin):
             outX.loc[X_normal.index, feat] = binned_data
             outX[feat] = outX[feat].replace(self.bin_info[feat])
         
-        outX = outX.astype(original_dtypes)  # Ensure the output retains the original data types
+        if self.keep_dtypes:
+            outX = outX.astype(original_dtypes)
+        else:
+            outX = outX.astype('float64')
         return outX
 
     def get_woe_df(self, X, y):
