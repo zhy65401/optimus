@@ -11,6 +11,7 @@ from enum import Enum
 import lightgbm as lgb
 import xgboost as xgb
 import statsmodels.api as sm
+from sklearn.linear_model import LogisticRegression
 from sklearn.base import TransformerMixin, BaseEstimator, ClassifierMixin
 
 from .metrics import Metrics
@@ -19,6 +20,8 @@ warnings.filterwarnings("ignore")
 
 
 class Estimators(Enum):
+        
+        LR = LogisticRegression('l2')
         
         LGBM = lgb.LGBMClassifier(
             class_weight='balanced', 
