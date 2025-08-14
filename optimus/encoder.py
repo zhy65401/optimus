@@ -92,8 +92,8 @@ class Encoder(BaseEstimator, TransformerMixin):
         total = len(df_y)
         total_bad = sum(df_y)
         total_good = total - total_bad
-        df_normal = pd.concat([X_normal, y_normal], axis=1).rename({X_normal.name: 'bins', y_normal.name: 'label'}, axis=1)
-        df_missing = pd.concat([X_missing, y_missing], axis=1).rename({X_missing.name: 'bins', y_missing.name: 'label'}, axis=1)
+        df_normal = pd.DataFrame({'bins': X_normal, 'label': y_normal})
+        df_missing = pd.DataFrame({'bins': X_missing, 'label': y_missing})
         gp_normal = df_normal.groupby('bins', observed=True).agg(
             bin_total=('label', 'count'),
             bad=('label', lambda x: sum(x)),
@@ -163,7 +163,9 @@ class Encoder(BaseEstimator, TransformerMixin):
         for feat, bins_woe in self.bin_info.items():
             if ('__N.A__' not in bins_woe) and (-990000 not in bins_woe):
                 normal_woes = [v for k, v in bins_woe.items() if k not in self.missing_values]
-                if self.treat_missing == 'mean':
+                if not normal_woes:
+                    res = np.nan
+                elif self.treat_missing == 'mean':
                     res = np.mean(normal_woes)
                 elif self.treat_missing == 'min':
                     res = np.min(normal_woes)
@@ -279,12 +281,15 @@ class Encoder(BaseEstimator, TransformerMixin):
             cprint(f'[INFO] {idx}/{outX.shape[1]} Process {feat}', 'white')
             X_missing, X_normal, _, _ = self._split_dataset(outX[feat])
             outX.loc[X_missing.index, feat] = X_missing
-            if self._feat_types[feat] == "numerical":
-                binned_data = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
-            else:
-                binned_data = outX[feat].astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
-            outX.loc[X_normal.index, feat] = binned_data
-            outX[feat] = outX[feat].replace(self.bin_info[feat])
+            if not X_normal.empty:
+                if self._feat_types[feat] == "numerical":
+                    bins_series = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
+                    binned_data = bins_series.map(self.bin_info[feat]).astype(float)
+                else:
+                    bin_labels = outX[feat].astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
+                    binned_data = bin_labels.map(self.bin_info[feat]).astype(outX[feat].dtype)
+                outX.loc[X_normal.index, feat] = binned_data
+                # outX[feat] = outX[feat].replace(self.bin_info[feat])
         
         if self.keep_dtypes:
             outX = outX.astype(original_dtypes)
@@ -304,20 +309,21 @@ class Encoder(BaseEstimator, TransformerMixin):
             cprint(f'[INFO] {idx}/{X.shape[1]} Process {feat}', 'white')
             X_missing, X_normal, y_missing, y_normal = self._split_dataset(X[feat], y)
             X.loc[X_missing.index, feat] = X_missing
-            if self._feat_types[feat] == "numerical":
+            if X_normal.empty:
+                binned_data = pd.Series([], name=feat)
+            elif self._feat_types.get(feat) == "numerical":
                 binned_data = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
             else:
                 binned_data = X_normal.astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
-            
+
             feat_woe_df = self._stat_feat(binned_data, y_normal, X_missing, y_missing)
             feat_woe_df['bin_strategy'] = self._bin_strategy[feat]
             feat_woe_df['feat_type'] = self._feat_types[feat]
             woe_info.append(feat_woe_df)
-        
+            
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             woe_info = pd.concat(woe_info)
-        
         # Trying to order the woe df with IV value
         ordered_ft = woe_info['IV']['feature'].droplevel(1).reset_index().drop_duplicates().sort_values(
             'feature', ascending=False
@@ -328,4 +334,3 @@ class Encoder(BaseEstimator, TransformerMixin):
     def fit_transform(self, X, y=None):
         return self.fit(X, y).transform(X, y)
 
-        

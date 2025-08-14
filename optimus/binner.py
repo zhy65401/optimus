@@ -311,7 +311,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         self.bins = None
         self.cat_others = []
         self.copy = copy
-        self._split_symbol = split_symbol
+        self.split_symbol = split_symbol
         self._eps = np.finfo(float).eps
         
     def _get_woe(self, X, y):
@@ -329,7 +329,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         if x in cat_others:
             return '__OTHERS__'
         for val in bin_list:
-            if x in val.split(self._split_symbol):
+            if x in val.split(self.split_symbol):
                 return val
         return '__N.A__'
         
@@ -338,16 +338,12 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         Pre-merge the bins that fewer than min_bin_rate to decrease the cardinality in feature.
         """
         cutoff_count = np.ceil(self.min_bin_rate * len(X))
-        cat_count = pd.value_counts(X)
+        cat_count = pd.Series(X).value_counts()
         self.cat_others = cat_count[cat_count < cutoff_count].index.values
         mask_others = pd.Series(X).isin(self.cat_others).values
 
         if np.count_nonzero(~mask_others) == 0:
-            emsg = (
-                "All categories moved to others' bin. At least one "
-                "category is needed to perform binning."
-            )
-            raise ValueError(emsg)
+            cprint(f"[WARNING] {X.name}: All categories are moved to `others` bin!", "yellow")
 
         return mask_others
     
@@ -362,7 +358,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
                 new_merge_name = "__OTHERS__"
                 self.cat_others.extend([n for n in to_merge_cols if n != "__OTHERS__"])
             else:
-                new_merge_name = self._split_symbol.join(to_merge_cols)
+                new_merge_name = self.split_symbol.join(to_merge_cols)
             mask_others = X.isin(to_merge_cols)
             # overwrite with new merged name
             X.loc[mask_others] = new_merge_name
@@ -372,7 +368,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
     def fit(self, X, y):
         inX = X.copy(deep=True)
         if is_numeric_dtype(X):
-            raise TypeError(f'Feature `{inX.name}` is a numerical feature, but the woeMerge strategy is selected.')
+            inX = inX.astype(str)
         masked_others = self._pre_merge(inX)
         inX.loc[masked_others] = "__OTHERS__"
         merged_categories: list = self._category_merger(inX, y)
