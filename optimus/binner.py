@@ -321,7 +321,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         
         return df.groupby('bin', observed=True).agg(
             woe=('label', lambda x: np.log(((len(x)-sum(x))/total_good) / (sum(x)/total_bad+self._eps)))
-        ).sort_values('woe', ascending=False).to_dict()['woe']
+        ).sort_values('woe', ascending=False)
         
     def _cat_bin_mapping(self, x, bin_list, cat_others):
         if pd.isna(x) or not x:

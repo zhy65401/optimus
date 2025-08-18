@@ -208,7 +208,7 @@ class Encoder(BaseEstimator, TransformerMixin):
             X_missing, X_normal, y_missing, y_normal = self._split_dataset(X[feat], y)
             # inX.loc[X_missing.index, feat] = X_missing
             
-            self._feat_types[feat] = 'numerical' if is_numeric_dtype(X_normal.dtype) else 'categorical'
+            self._feat_types[feat] = 'numerical' if is_numeric_dtype(X_normal.dtype) and (X_normal.nunique()>10) else 'categorical'
             if bin_strategy == 'auto':
                 if (self._feat_types[feat]=="numerical") and (X_normal.nunique()>10):
                     bin_strategy = "bestKS"
@@ -286,7 +286,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                     bins_series = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
                     binned_data = bins_series.map(self.bin_info[feat]).astype(float)
                 else:
-                    bin_labels = outX[feat].astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
+                    bin_labels = outX[feat].map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
                     binned_data = bin_labels.map(self.bin_info[feat]).astype(outX[feat].dtype)
                 outX.loc[X_normal.index, feat] = binned_data
                 # outX[feat] = outX[feat].replace(self.bin_info[feat])
@@ -314,7 +314,7 @@ class Encoder(BaseEstimator, TransformerMixin):
             elif self._feat_types.get(feat) == "numerical":
                 binned_data = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
             else:
-                binned_data = X_normal.astype(str).map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
+                binned_data = X[feat].map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
 
             feat_woe_df = self._stat_feat(binned_data, y_normal, X_missing, y_missing)
             feat_woe_df['bin_strategy'] = self._bin_strategy[feat]
