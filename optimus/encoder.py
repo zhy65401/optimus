@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.2.0
 # Created: 2024-04-07
+# Last Modified: 2025-08-19
 # Author: ["Hanyuan Zhang"]
 
 import warnings
@@ -10,7 +11,7 @@ from termcolor import cprint
 from pandas.api.types import is_numeric_dtype
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from .binner import QCut, SimpleCut, ChiMergeCut, BestKSCut, WOEMerge
+from .binner import QCut, SimpleCut, ChiMergeCut, BestKSCut, WOEMerge, OptimalCut
 
 
 class Encoder(BaseEstimator, TransformerMixin):
@@ -151,7 +152,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         if x in cat_others:
             return '__OTHERS__'
         for val in bin_list:
-            if x in val.split(self._split_symbol):
+            if str(x) in val.split(self._split_symbol):
                 return val
         return '__N.A__'
     
@@ -202,19 +203,24 @@ class Encoder(BaseEstimator, TransformerMixin):
             cprint(f'[INFO] {idx}/{len(self.spec)} Process {feat}', 'white')
             target_bin_cnt = kwargs.get('target_bin_cnt', 5)
             min_bin_rate = kwargs.get('min_bin_rate', 0.05)
+            monotonic_trend = kwargs.get('monotonic_trend', 'auto_asc_desc')
             if feat not in X:
                 raise KeyError(f'{feat} in Binning Category is not in X columns.')
             
             X_missing, X_normal, y_missing, y_normal = self._split_dataset(X[feat], y)
             # inX.loc[X_missing.index, feat] = X_missing
             
-            self._feat_types[feat] = 'numerical' if is_numeric_dtype(X_normal.dtype) and (X_normal.nunique()>10) else 'categorical'
+            self._feat_types[feat] = 'numerical' if is_numeric_dtype(X_normal.dtype) else 'categorical'
             if bin_strategy == 'auto':
-                if (self._feat_types[feat]=="numerical") and (X_normal.nunique()>10):
+                if self._feat_types[feat]=="numerical":
                     bin_strategy = "bestKS"
                 else:
                     bin_strategy = "woeMerge"
-            if isinstance(bin_strategy, list):
+            if X_normal.empty:
+                cprint(f"[WARN] {feat} has no normal values!", "yellow")
+                binned_data = pd.Series([], name=feat)
+                self._bin_array[feat] = []
+            elif isinstance(bin_strategy, list):
                 assert len(bin_strategy) > 1, "Custom binning strategy should have at least two elements!"
                 binned_data = pd.cut(X_normal, bin_strategy, include_lowest=True)
                 self._bin_array[feat] = bin_strategy        
@@ -235,6 +241,10 @@ class Encoder(BaseEstimator, TransformerMixin):
                 best_ks = BestKSCut(target_bin_cnt, min_bin_rate)
                 binned_data = best_ks.fit_transform(X_normal, y_normal)
                 self._bin_array[feat] = best_ks.bins.tolist()
+            elif bin_strategy == "optimal":
+                optimal = OptimalCut(feat, self._feat_types[feat], max_n_bins=target_bin_cnt, min_prebin_size=min_bin_rate, monotonic_trend=monotonic_trend)
+                binned_data = optimal.fit_transform(X_normal, y_normal)
+                self._bin_array[feat] = optimal.bins
             elif bin_strategy == "woeMerge":
                 woemerge = WOEMerge(target_bin_cnt, min_bin_rate)
                 binned_data = woemerge.fit_transform(X_normal, y_normal)
@@ -251,7 +261,7 @@ class Encoder(BaseEstimator, TransformerMixin):
             
             # inX.loc[binned_data.index, feat] = binned_data
             
-            self._bin_strategy[feat] = bin_strategy if isinstance(bin_strategy, str) else 'custom'
+            self._bin_strategy[feat] = bin_strategy if isinstance(bin_strategy, str) or isinstance(bin_strategy, bool) else 'custom'
             # compute and save woe
             self.bin_info[feat] = self._get_woe(binned_data, y_normal, X_missing, y_missing)
             
@@ -289,6 +299,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                     bin_labels = outX[feat].map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
                     binned_data = bin_labels.map(self.bin_info[feat]).astype(outX[feat].dtype)
                 outX.loc[X_normal.index, feat] = binned_data
+                outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(self.bin_info[feat])
                 # outX[feat] = outX[feat].replace(self.bin_info[feat])
         
         if self.keep_dtypes:
@@ -314,7 +325,7 @@ class Encoder(BaseEstimator, TransformerMixin):
             elif self._feat_types.get(feat) == "numerical":
                 binned_data = pd.cut(X_normal, self._bin_array[feat], include_lowest=True)
             else:
-                binned_data = X[feat].map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
+                binned_data = X_normal.map(lambda x: self._cat_bin_mapping(x, self._bin_array[feat], self._cat_others.get(feat, [])))
 
             feat_woe_df = self._stat_feat(binned_data, y_normal, X_missing, y_missing)
             feat_woe_df['bin_strategy'] = self._bin_strategy[feat]
@@ -331,6 +342,6 @@ class Encoder(BaseEstimator, TransformerMixin):
         woe_info = woe_info.reindex(ordered_ft, level=0)
         return woe_info
     
-    def fit_transform(self, X, y=None):
-        return self.fit(X, y).transform(X, y)
+    def fit_transform(self, X, y=None, **kwargs):
+        return self.fit(X, y, **kwargs).transform(X, y)
 
