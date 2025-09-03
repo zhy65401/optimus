@@ -21,7 +21,7 @@ Optimus is a powerful machine learning toolkit specifically designed for the dev
 
 ```bash
 # Install from source
-git clone https://git.gofluid.io/data/optimus.git
+git clone https://github.com/zhy65401/optimus.git
 cd optimus
 pip install -r requirements.txt
 pip install -e .
