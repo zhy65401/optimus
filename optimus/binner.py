@@ -1,6 +1,7 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.2.0
 # Created: 2024-04-07
+# Last Modified: 2025-08-19
 # Author: ["Hanyuan Zhang"]
 
 import numpy as np
@@ -8,6 +9,7 @@ import pandas as pd
 from termcolor import cprint
 from pandas.api.types import is_numeric_dtype
 from itertools import combinations
+from optbinning import OptimalBinning
 
 from sklearn.base import BaseEstimator, TransformerMixin
     
@@ -329,7 +331,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         if x in cat_others:
             return '__OTHERS__'
         for val in bin_list:
-            if x in val.split(self.split_symbol):
+            if str(x) in val.split(self.split_symbol):
                 return val
         return '__N.A__'
         
@@ -382,3 +384,118 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         else:
             outX = X.astype(str)
         return outX.map(lambda x: self._cat_bin_mapping(x, self.bins, self.cat_others))
+
+
+class OptimalCut(BaseEstimator, TransformerMixin):
+    def __init__(self, name=None, dtype=None, solver="cp", divergence="iv", max_n_bins=5, 
+                 min_prebin_size=0.05, min_n_bins=None, max_pvalue=None, max_pvalue_policy="consecutive",
+                 gamma=0, monotonic_trend='auto_asc_desc', user_splits=None, special_codes=None, 
+                 split_digits=None, split_symbol='||', copy=True):
+        """Optimal binning strategy using optbinning library. This strategy can be applied to both numerical and categorical features.
+
+        Args:
+            name (str, optional): Feature name. Defaults to None.
+            dtype (str, optional): Feature data type ('numerical' or 'categorical'). Defaults to None.
+            solver (str, optional): Solver for optimization. Defaults to "cp".
+            divergence (str, optional): Divergence measure. Defaults to "iv".
+            max_n_bins (int, optional): Maximum number of bins. Defaults to 5.
+            min_prebin_size (float, optional): Minimum prebin size. Defaults to 0.05.
+            min_n_bins (int, optional): Minimum number of bins. Defaults to None.
+            max_pvalue (float, optional): Maximum p-value for statistical test. Defaults to `auto_asc_desc`.
+            max_pvalue_policy (str, optional): Policy for max p-value. Defaults to "consecutive".
+            gamma (float, optional): Regularization parameter. Defaults to 0.
+            monotonic_trend (str, optional): Monotonic constraint. Defaults to None.
+            user_splits (list, optional): User-defined splits. Defaults to None.
+            special_codes (list, optional): Special codes to handle separately. Defaults to None.
+            split_digits (int, optional): Number of digits for splits. Defaults to None.
+            split_symbol (str, optional): The split symbol to separate each categorical bin. Defaults to '||'.
+            copy (bool, optional): Whether to copy input data. Defaults to True.
+        """
+        self.name = name
+        self.dtype = dtype
+        self.solver = solver
+        self.divergence = divergence
+        self.max_n_bins = max_n_bins
+        self.min_prebin_size = min_prebin_size
+        self.min_n_bins = min_n_bins
+        self.max_pvalue = max_pvalue
+        self.max_pvalue_policy = max_pvalue_policy
+        self.gamma = gamma
+        self.monotonic_trend = monotonic_trend
+        self.user_splits = user_splits
+        self.special_codes = special_codes
+        self.split_digits = split_digits
+        self.split_symbol = split_symbol
+        self.copy = copy
+        self.bins = []
+        self._optb = None
+        
+    def _cat_bin_mapping(self, x, bin_list):
+        """Map categorical value to bin name"""
+        if pd.isna(x) or not x:
+            return '__N.A__'
+        for bin_name in bin_list:
+            # bin_name is like "cat1||cat2||cat3"
+            if str(x) in bin_name.split(self.split_symbol):
+                return bin_name
+        return '__N.A__'
+        
+    def fit(self, X, y):
+        self._optb = OptimalBinning(
+            name=self.name,
+            dtype=self.dtype,
+            solver=self.solver,
+            divergence=self.divergence,
+            max_n_bins=self.max_n_bins,
+            min_prebin_size=self.min_prebin_size,
+            min_n_bins=self.min_n_bins,
+            max_pvalue=self.max_pvalue,
+            max_pvalue_policy=self.max_pvalue_policy,
+            gamma=self.gamma,
+            monotonic_trend=self.monotonic_trend,
+            user_splits=self.user_splits,
+            special_codes=self.special_codes,
+            split_digits=self.split_digits
+        )
+        # Fit the optimal binning
+        self._optb.fit(X.values, y.values)
+        
+        # Get the bins
+        if self.dtype == 'numerical':
+            if len(self._optb.splits) == 0:
+                # No splits found, create a single bin covering all values
+                cprint(f"[WARNING] {self.name}: No optimal splits found, using single bin.", "yellow")
+                self.bins = [float('-inf'), float('inf')]
+            else:
+                self.bins = Common._adjust_bins([min(X.values), *self._optb.splits, max(X.values)])
+        else:
+            # For categorical features, splits is list of arrays
+            if hasattr(self._optb, 'splits') and len(self._optb.splits) > 0:
+                # Convert list of arrays to list of strings joined by split_symbol
+                for bin_array in self._optb.splits:
+                    bin_name = self.split_symbol.join([str(cat) for cat in bin_array])
+                    self.bins.append(bin_name)
+            else:
+                # Fallback to unique categories if no splits
+                cprint(f"[WARNING] {self.name}: No optimal splits found, using all unique categories.", "yellow")
+                self.bins = [str(cat) for cat in X.unique()]
+            
+        return self
+    
+    def transform(self, X):
+        if self._optb is None:
+            raise ValueError("OptimalCut must be fitted before transform.")
+            
+        if self.copy:
+            outX = X.copy(deep=True)
+        else:
+            outX = X
+            
+        if self.dtype == 'numerical':
+            # For numerical features, use pd.cut with the bins
+            outX = pd.cut(outX, self.bins, include_lowest=True)
+        else:
+            # For categorical features, map values to bin names
+            outX = outX.astype(str).map(lambda x: self._cat_bin_mapping(x, self.bins))
+            
+        return outX

@@ -1,92 +1,352 @@
 # Optimus
 
+An end-to-end machine learning toolkit designed specifically for financial risk modeling and credit scoring.
 
+## Introduction
 
-## Getting started
+Optimus is a powerful machine learning toolkit specifically designed for the development needs of financial risk control and credit scoring models. It provides a complete workflow from data preprocessing to model deployment, including feature engineering, model training, hyperparameter tuning, model calibration, and report generation.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+### Key Advantages
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+- **Professional Binning Strategies**: Support for multiple intelligent binning algorithms (ChiMerge, BestKS, WOEMerge, OptimalBinning, etc.)
+- **Smart Feature Selection**: Statistical metric-based feature filtering (IV, KS, Gini, PSI, VIF, correlation)
+- **Multi-Model Support**: Integration of mainstream algorithms like Logistic Regression, XGBoost, LightGBM
+- **Automated Hyperparameter Tuning**: Support for Grid Search and Bayesian Optimization
+- **Model Calibration**: Scorecard mapping and probability calibration functionality
+- **Professional Reports**: Automated generation of detailed modeling reports and visualizations
 
-## Add your files
+## Quick Start
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+### Installation
 
+```bash
+# Install from source
+git clone https://github.com/zhy65401/optimus.git
+cd optimus
+pip install -r requirements.txt
+pip install -e .
 ```
-cd existing_repo
-git remote add origin https://git.gofluid.io/data/optimus.git
-git branch -M main
-git push -uf origin main
+
+### Basic Usage
+
+```python
+import pandas as pd
+from optimus.encoder import Encoder
+from optimus.feature_selection import IVSelector, CorrSelector
+from optimus.estimator import Benchmark
+from optimus.calibrator import Calibration
+from sklearn.pipeline import Pipeline
+
+# 1. Data preprocessing and feature encoding
+encoder = Encoder(spec={
+    'age': 'bestKS',           # Numerical feature using BestKS binning
+    'income': 'chiMerge',      # Numerical feature using ChiMerge binning
+    'occupation': 'woeMerge',   # Categorical feature using WOE merging
+    'education': [1, 2, 3, 4]   # Custom binning boundaries
+})
+
+# 2. Feature selection pipeline
+feature_selector = Pipeline([
+    ('iv', IVSelector(iv_threshold=0.02)),
+    ('corr', CorrSelector(corr_threshold=0.95))
+])
+
+# 3. Model training
+benchmark = Benchmark(positive_coef=False, remove_method="iv")
+
+# 4. Model calibration
+calibrator = Calibration(score_type='mega_score')
+
+# Complete workflow example
+X_train_encoded = encoder.fit_transform(X_train, y_train)
+X_selected = feature_selector.fit_transform(X_train_encoded, y_train)
+model = benchmark.fit(X_selected, y_train)
 ```
 
-## Integrate with your tools
+## Feature Overview
 
-- [ ] [Set up project integrations](https://git.gofluid.io/data/optimus/-/settings/integrations)
+### Data Preprocessing
 
-## Collaborate with your team
+#### Smart Binning
+- **QCut**: Equal frequency binning for continuous numerical features
+- **SimpleCut**: Simple binning for strategy rule formulation
+- **ChiMerge**: Chi-square test based binning merging
+- **BestKS**: KS value optimization based binning method
+- **WOEMerge**: WOE value based categorical feature merging
+- **OptimalCut**: Optimal binning based on OptimalBinning library
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+```python
+from optimus.binner import BestKSCut, WOEMerge
 
-## Test and Deploy
+# Numerical feature binning
+num_binner = BestKSCut(target_bin_cnt=5, min_bin_rate=0.05)
+binned_feature = num_binner.fit_transform(X['income'], y)
 
-Use the built-in continuous integration in GitLab.
+# Categorical feature merging
+cat_binner = WOEMerge(target_bin_cnt=4, min_bin_rate=0.05)
+merged_feature = cat_binner.fit_transform(X['occupation'], y)
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing(SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+#### WOE Encoding
+- Automatic handling of missing values and outliers
+- Support for custom missing value handling strategies
+- Generation of detailed WOE analysis reports
 
-***
+```python
+from optimus.encoder import Encoder
 
-# Editing this README
+encoder = Encoder(
+    spec={
+        'feature1': 'auto',      # Automatically select best binning strategy
+        'feature2': 'bestKS',    # Specify binning method
+        'feature3': [0, 10, 50, 100]  # Custom binning points
+    },
+    missing_values=[-999, 'NULL'],  # Custom missing value identifiers
+    treat_missing='mean'            # Missing value handling strategy
+)
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thank you to [makeareadme.com](https://www.makeareadme.com/) for this template.
+X_encoded = encoder.fit_transform(X, y)
+woe_report = encoder.get_woe_df(X, y)
+```
 
-## Suggestions for a good README
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Feature Selection
 
-## Name
-Choose a self-explaining name for your project.
+Multi-dimensional feature filtering strategies:
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+```python
+from optimus.feature_selection import (
+    IVSelector, PSISelector, GINISelector, 
+    CorrSelector, VIFSelector, BoostingTreeSelector
+)
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+# IV value filtering
+iv_selector = IVSelector(iv_threshold=0.02)
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+# PSI stability testing
+psi_selector = PSISelector(psi_threshold=0.1)
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+# GINI sign filtering
+gini_selector = GINISelector()
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+# Correlation filtering
+corr_selector = CorrSelector(corr_threshold=0.95, method='iv_descending')
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+# Multicollinearity testing
+vif_selector = VIFSelector(vif_threshold=10)
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+# Feature Stabality testing
+boost_selector = BoostingTreeSelector(select_frac=0.9)
+
+# Combined usage
+pipeline = Pipeline([
+    ('iv', iv_selector),
+    ('psi', psi_selector),
+    ('gini', gini_selector),
+    ('corr', corr_selector),
+    ('vif', vif_selector),
+    ('boost', boost_selector),
+])
+```
+
+### Model Training
+
+#### Supported Algorithms
+- **Benchmark**: Benchmark model with a basic logistic regression without any tunning in parameters.
+- **Logistic Regression**: With coefficient testing and significance analysis
+- **XGBoost**: Gradient boosting tree model
+- **LightGBM**: Efficient gradient boosting framework
+
+```python
+from optimus.estimator import Benchmark, Estimators
+
+# Benchmark logistic regression model (with built-in feature filtering)
+benchmark = Benchmark(
+    positive_coef=False,           # Require negative coefficients (risk features)
+    remove_method="iv",            # Removal strategy
+    pvalue_threshold=0.05          # Significance threshold
+)
+benchmark.fit(X, y)
+
+# Using other algorithms
+lgbm_model = Estimators.LGBM.value
+lgbm_model.fit(X, y)
+```
+
+#### Hyperparameter Optimization
+
+```python
+from hyperopt import hp
+from optimus.tuner import GridSearch, BO
+
+# Grid search
+gs = GridSearch(
+    model_type='LGBM',
+    param_grid={
+        'n_estimators': [50, 100, 200],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.1, 0.2]
+    }
+)
+gs.fit(X_train, y_train, X_test, y_test)
+
+# Bayesian optimization
+bo = BO(
+    model_type='LR', 
+    max_evals=100,
+    param_grid={
+        'C': hp.choice("C", np.arange(1, 100, 1)), 
+        'penalty': hp.choice("penalty", ['l2'])
+    }
+)
+bo.fit(X_train, y_train, X_test, y_test)
+```
+
+### Model Calibration
+
+Multiple score mapping strategies:
+
+```python
+from optimus.calibrator import Calibration
+
+# Standard credit score (300-850 points)
+calibrator = Calibration(score_type='mega_score')
+calibrator.fit(y_prob, y_true)
+scores = calibrator.transform(y_prob_test)
+
+# Custom score mapping
+calibrator = Calibration(
+    score_type='self-defining',
+    mapping_base={500: 0.1, 600: 0.05, 700: 0.01},
+    score_cap=800,
+    score_floor=300
+)
+```
+
+### Report Generation
+
+Automated professional modeling reports:
+
+```python
+from optimus.reporter import Reporter
+
+reporter = Reporter('model_report.xlsx')
+reporter.generate_report(performance_data, id_column='customer_id')
+```
+
+Report contents include:
+- Sample overview and distribution analysis
+- Feature statistics and WOE analysis
+- Feature selection details
+- Model performance metrics
+- Hyperparameter tuning results
+- Model calibration analysis
+
+## Usage Examples
+
+### Complete Modeling Workflow
+
+```python
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from optimus import *
+
+# 1. Data loading
+df = pd.read_csv('credit_data.csv')
+X = df.drop('target', axis=1)
+y = df['target']
+
+# 2. Data splitting
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+# 3. Feature engineering pipeline
+preprocessing_pipeline = Pipeline([
+    # WOE encoding
+    ('encoder', Encoder(spec={
+        'age': 'bestKS',
+        'income': 'chiMerge',
+        'education': 'woeMerge',
+        'employment_length': 'optimal'
+    })),
+    
+    # Feature selection
+    ('feature_selection', Pipeline([
+        ('iv', IVSelector(iv_threshold=0.02)),
+        ('psi', PSISelector(psi_threshold=0.1)),
+        ('corr', CorrSelector(corr_threshold=0.95))
+    ]))
+])
+
+# 4. Preprocessing
+X_train_processed = preprocessing_pipeline.fit_transform(X_train, y_train)
+X_test_processed = preprocessing_pipeline.transform(X_test)
+
+# 5. Model training
+model = Benchmark()
+model.fit(X_train_processed, y_train)
+
+# 6. Model calibration
+y_prob = model.predict_proba(X_test_processed)[:, 1]
+calibrator = Calibration(score_type='mega_score')
+calibrator.fit(y_prob, y_test)
+scores = calibrator.transform(y_prob)
+
+# 7. Report generation
+reporter = Reporter('credit_model_report.xlsx')
+performance_data = {
+    'df_res': pd.concat([X_test, y_test, 
+                        pd.Series(y_prob, name='proba'),
+                        pd.Series(scores, name='score')], axis=1),
+    'benchmark': model,
+    'calibrate_detail': calibrator.calibrate_detail
+}
+reporter.generate_report(performance_data, 'customer_id')
+```
+
+## Release Notes
+
+### v0.2.0 (Current Version)
+- **New Feature**: Integrated OptimalBinning algorithm into binner
+- Added OptimalCut class for smarter optimal binning
+- Fixed several issues with categorical feature handling
+- Improved stability and efficiency of WOE encoding
+- Optimized report generation format and content
+
+### v0.1.0 (Initial Release)
+- Initial project release
+- Core functional modules:
+  - Feature binning and WOE encoding
+  - Multi-dimensional feature selection
+  - Model training and evaluation
+  - Hyperparameter tuning
+  - Model calibration
+  - Report generation
+
+## Python Requirements
+- Python >= 3.8
 
 ## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+We welcome community contributions! Please follow these steps:
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+1. Fork this repository
+2. Create a feature branch (`git checkout -b <BRANCH NAME>`)
+3. Commit your changes (`git commit -m <YOUR COMMIT MESSAGE>`)
+4. Push to the branch (`git push origin <BRANCH NAME>`)
+5. Create a Pull Request
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+## Support
 
-## License
-For open source projects, say how it is licensed.
+For questions or suggestions, please:
+- Contact maintainer: klesterchueng@gmail.com
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+## Acknowledgments
+
+Thanks to all developers and users who have contributed to the Optimus project.
+
+---
+
+**Optimus** - Making financial risk model development simpler and more efficient!
+

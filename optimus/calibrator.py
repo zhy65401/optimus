@@ -159,10 +159,23 @@ class Calibration(TransformerMixin):
             bad_rate=('label', 'mean')
         )
         df_res = df_res.reset_index()
+        
+        bad_aft_rate = []
+        good_aft_rate = []
+        approval_rate = []
+        for idx, _ in df_res.iterrows():
+            with np.errstate(divide='ignore', invalid='ignore'):
+                approval_rate.append(df_res.iloc[idx:]['total_pct'].sum())
+                bad_aft_rate.append(df_res.iloc[idx:]['total_bad'].sum() / (df_res.iloc[idx:]['total'].sum() + eps))
+                good_aft_rate.append(df_res.iloc[idx:]['total_good'].sum() / (df_res.iloc[idx:]['total'].sum() + eps))
+        df_res['approval_rate'] = approval_rate
+        df_res['bad_aft_rate'] = bad_aft_rate
+        df_res['good_aft_rate'] = good_aft_rate
+        
         df_res['score_max'] = df_res['score_bin'].apply(lambda x: x.right)
         df_res['good_dist'] = df_res['total_good'] / (df_res['total_good'].sum() + eps)
         df_res['bad_dist'] = df_res['total_bad'] / (df_res['total_bad'].sum() + eps)
-
+        
         if self.score_type == 'probability':
             df_res['exp_bad_rate'] = df_res['score_max']
         else:
@@ -180,9 +193,15 @@ class Calibration(TransformerMixin):
         df_res['odds_aft'] = (df_res['total_bad'] - df_res['total_bad'].cumsum()) / (df_res['total_good'] - df_res['total_good'].cumsum() + eps)
         df_res['odds_ratio'] = df_res['odds_bef'] / df_res['odds_aft']
         df_res['inv_odds_ratio'] = df_res['odds_aft'] / df_res['odds_bef']
-        
 
-        lst_col = ['score_bin', 'score_max', 'total', 'total_pct', 'total_good', 'good_rate', 'good_dist', 'total_bad', 'bad_rate', 'bad_dist', 'exp_bad_rate', 'odds_ratio', 'inv_odds_ratio', 'ks', 'iv']
+        lst_col = [
+            'score_bin', 'score_max', 'total', 'total_pct', 
+            'total_good', 'good_rate', 'good_dist', 'good_aft_rate', 
+            'total_bad', 'bad_rate', 'bad_dist', 'bad_aft_rate', 
+            'approval_rate', 'exp_bad_rate', 
+            'odds_ratio', 'inv_odds_ratio', 
+            'ks', 'iv'
+        ]
         df_res = df_res[lst_col]
         return df_res
 
