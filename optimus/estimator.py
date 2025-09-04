@@ -4,15 +4,15 @@
 # Author: ["Hanyuan Zhang"]
 
 import warnings
-import numpy as np
-import pandas as pd
 from enum import Enum
 
 import lightgbm as lgb
-import xgboost as xgb
+import numpy as np
+import pandas as pd
 import statsmodels.api as sm
+import xgboost as xgb
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.linear_model import LogisticRegression
-from sklearn.base import TransformerMixin, BaseEstimator, ClassifierMixin
 
 from .metrics import Metrics
 
@@ -20,25 +20,26 @@ warnings.filterwarnings("ignore")
 
 
 class Estimators(Enum):
-        
-        LR = LogisticRegression('l2')
-        
-        LGBM = lgb.LGBMClassifier(
-            class_weight='balanced', 
-            importance_type='gain',
-            n_jobs=8, 
-            random_state=1024, 
-            verbosity=-1
-        )
-        XGB = xgb.XGBClassifier(
-            n_jobs=8, 
-            random_state=1024,
-            use_label_encoder=False
-        )
+    LR = LogisticRegression("l2")
+
+    LGBM = lgb.LGBMClassifier(
+        class_weight="balanced",
+        importance_type="gain",
+        n_jobs=8,
+        random_state=1024,
+        verbosity=-1,
+    )
+    XGB = xgb.XGBClassifier(n_jobs=8, random_state=1024, use_label_encoder=False)
 
 
 class Benchmark(BaseEstimator, ClassifierMixin):
-    def __init__(self, positive_coef=False, remove_method="iv", pvalue_threshold=0.05, user_feature_list=None):
+    def __init__(
+        self,
+        positive_coef=False,
+        remove_method="iv",
+        pvalue_threshold=0.05,
+        user_feature_list=None,
+    ):
         self.version = "v1.0.2"
         self.model = None
         self.model_detail = None
@@ -47,7 +48,7 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         self.removed_features = dict()
         self.coef_selector = None
         self.pvalue_selector = None
-        
+
         self.positive_coef = positive_coef
         self.remove_method = remove_method
         self.pvalue_threshold = pvalue_threshold
@@ -58,8 +59,12 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         self.selected_features = feature_list
 
         # remove variable with inconsistent trend between woe and coefficient
-        print("[INFO] Removing inconsistent trend features between woe and coefficient...")
-        coef_selector = CoefSelector(positive_coef=self.positive_coef, remove_method=self.remove_method)
+        print(
+            "[INFO] Removing inconsistent trend features between woe and coefficient..."
+        )
+        coef_selector = CoefSelector(
+            positive_coef=self.positive_coef, remove_method=self.remove_method
+        )
         coef_selector.fit(
             X[self.selected_features],
             y,
@@ -73,10 +78,7 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         # remove variable with insignificant p value
         print("[INFO] Removing features with insignificant p-value...")
         pvalue_selector = PValueSelector(pvalue_threshold=self.pvalue_threshold)
-        pvalue_selector.fit(
-            X[self.selected_features],
-            y
-        )
+        pvalue_selector.fit(X[self.selected_features], y)
         self.selected_features = pvalue_selector.selected_features
         self.pvalue_selector = pvalue_selector
         self.removed_features["by_pvalue"] = pvalue_selector.removed_features
@@ -91,10 +93,10 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         self.model_detail = model.detail
         self.summary()
         return self
-    
+
     def transform(self, X, y=None):
         return X
-    
+
     def predict(self, df_xtest):
         # sm.add_constant won't add a constant if there exists a column with variance 0
         df_xtest = sm.add_constant(df_xtest)
@@ -112,8 +114,12 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         return res
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features['by_pvalue'])} features by pvalue  {len(self.removed_features['by_coef'])} features by inconsistent coef, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features['by_pvalue'])} features by pvalue  {len(self.removed_features['by_coef'])} features by inconsistent coef, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class Logit(BaseEstimator, ClassifierMixin):
@@ -204,9 +210,7 @@ class CoefSelector(TransformerMixin):
         self.detail = list()
 
         if self.remove_method == "iv":
-            lst_iv = [
-                Metrics.get_iv(df_ytrain, df_xtrain[c]) for c in feature_list
-            ]
+            lst_iv = [Metrics.get_iv(df_ytrain, df_xtrain[c]) for c in feature_list]
             df_iv = pd.DataFrame({"var": feature_list, "iv": lst_iv})
             df_iv = df_iv[["var", "iv"]]
 
@@ -228,7 +232,9 @@ class CoefSelector(TransformerMixin):
 
             if df_res["pvalue"].isnull().sum() != 0:
                 df_remove = df_res.loc[(df_res["pvalue"].isnull()), :]
-                df_remove = df_remove.sort_values(by=f"{self.remove_method}", ascending=True)
+                df_remove = df_remove.sort_values(
+                    by=f"{self.remove_method}", ascending=True
+                )
                 df_remove = df_remove.reset_index(drop=True)
                 remove_var = df_remove.loc[0, "var"]
                 self.selected_features.remove(remove_var)
@@ -254,12 +260,19 @@ class CoefSelector(TransformerMixin):
 
         return self
 
-    def transform(self, df_xtest,):
+    def transform(
+        self,
+        df_xtest,
+    ):
         return df_xtest[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class PValueSelector(TransformerMixin):
@@ -301,5 +314,9 @@ class PValueSelector(TransformerMixin):
         return df_xtest[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
