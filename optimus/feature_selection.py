@@ -4,12 +4,15 @@
 # Author: ["Hanyuan Zhang"]
 
 import warnings
+
+import lightgbm as lgb
 import numpy as np
 import pandas as pd
-import lightgbm as lgb
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 from sklearn.base import TransformerMixin
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+
 from .metrics import Metrics
+
 warnings.filterwarnings("ignore")
 
 
@@ -17,19 +20,25 @@ class Filter(TransformerMixin):
     def __init__(self, extra_cols=None):
         self.extra_cols_ = extra_cols or []
         self.df_extra = None
-        
+
     def fit(self, X, y=None):
-        assert (n := set(self.extra_cols_) - set(X.columns.tolist())) == set(), f"Extra columns {n} not in X"
-        self.feature_names_ = [c for c in X.columns.tolist() if c not in self.extra_cols_]
+        assert (
+            n := set(self.extra_cols_) - set(X.columns.tolist())
+        ) == set(), f"Extra columns {n} not in X"
+        self.feature_names_ = [
+            c for c in X.columns.tolist() if c not in self.extra_cols_
+        ]
         self.df_extra = X[self.extra_cols_]
         return self
-    
-    def transform(self, X, y=None):        
+
+    def transform(self, X, y=None):
         return X[self.feature_names_]
 
 
 class CorrSelector(TransformerMixin):
-    def __init__(self, corr_threshold=0.95, user_feature_list=None, method='iv_descending'):
+    def __init__(
+        self, corr_threshold=0.95, user_feature_list=None, method="iv_descending"
+    ):
         self.detail = dict()
         self.selected_features = list()
         self.removed_features = list()
@@ -85,7 +94,9 @@ class CorrSelector(TransformerMixin):
                 if var not in df_res.index:
                     continue
                 else:
-                    lst_remove = df_res[df_res[var] >= self.corr_threshold].index.tolist()
+                    lst_remove = df_res[
+                        df_res[var] >= self.corr_threshold
+                    ].index.tolist()
                     df_res = df_res.drop(lst_remove, axis=0)
                     df_res = df_res.drop(lst_remove, axis=1)
             self.detail["after"] = df_res
@@ -104,13 +115,16 @@ class CorrSelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class GINISelector(TransformerMixin):
     def __init__(self, user_feature_list=None):
-        
         self.detail = None
         self.selected_features = list()
         self.removed_features = list()
@@ -119,20 +133,17 @@ class GINISelector(TransformerMixin):
     def fit(self, X, y, refX=None, refy=None):
         print("[INFO]: Processing GINI Selector...")
         if refX is None or refy is None:
-            print("[WARNING]: need to provide train and test data to do GINI based feature selection")
+            print(
+                "[WARNING]: need to provide train and test data to do GINI based feature selection"
+            )
             refX = X.copy()
             refy = y.copy()
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         # compute gini on train data
-        lst_gini_train = [
-            Metrics.get_gini(y, X[c]) for c in feature_list
-        ]
+        lst_gini_train = [Metrics.get_gini(y, X[c]) for c in feature_list]
 
         # compute gini on test data
-        lst_gini_test = [
-            Metrics.get_gini(refy, refX[c]) for c in feature_list
-        ]
-            
+        lst_gini_test = [Metrics.get_gini(refy, refX[c]) for c in feature_list]
 
         # select feature with same gini sign in train and test data
         df_res = pd.DataFrame(
@@ -158,8 +169,12 @@ class GINISelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class PSISelector(TransformerMixin):
@@ -174,14 +189,16 @@ class PSISelector(TransformerMixin):
         print("[INFO]: Processing PSI Selector...")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         if refX is None:
-            print("[WARNING]: need to provide train and test data to do PSI based feature selection")
+            print(
+                "[WARNING]: need to provide train and test data to do PSI based feature selection"
+            )
             refX = X
         # compute PSI
         psi = []
         for col in refX[feature_list]:
             psi.append(Metrics.get_psi(X[col], refX[col]))
 
-        sr_psi = pd.Series(psi, index = refX[feature_list].columns)
+        sr_psi = pd.Series(psi, index=refX[feature_list].columns)
         sr_psi.name = "psi"
         sr_psi.index.name = "var"
         df_psi = sr_psi.reset_index()
@@ -203,8 +220,12 @@ class PSISelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class IVSelector(TransformerMixin):
@@ -235,8 +256,12 @@ class IVSelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class VIFSelector(TransformerMixin):
@@ -252,7 +277,10 @@ class VIFSelector(TransformerMixin):
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
 
         # compute VIF
-        vif = [variance_inflation_factor(X.values, i) for i in range(X[feature_list].shape[1])]
+        vif = [
+            variance_inflation_factor(X.values, i)
+            for i in range(X[feature_list].shape[1])
+        ]
 
         # select features with VIF < vif_threshold
         df_res = pd.DataFrame({"var": feature_list, "vif": [round(v, 3) for v in vif]})
@@ -272,8 +300,12 @@ class VIFSelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
 
 
 class BoostingTreeSelector(TransformerMixin):
@@ -315,7 +347,7 @@ class BoostingTreeSelector(TransformerMixin):
             y,
             eval_metric="auc",
             eval_set=[(X, y), (refX[feature_list], refy)],
-            callbacks=[lgb.early_stopping(stopping_rounds=10)]
+            callbacks=[lgb.early_stopping(stopping_rounds=10)],
         )
 
         df_res = (
@@ -329,7 +361,9 @@ class BoostingTreeSelector(TransformerMixin):
             .reset_index(drop=True)
         )
 
-        select_num = int(self.select_frac * len(df_res[df_res["feature_importance"] != 0]))
+        select_num = int(
+            self.select_frac * len(df_res[df_res["feature_importance"] != 0])
+        )
         df_res["selected"] = False
         df_res.loc[0:select_num, "selected"] = True
 
@@ -347,9 +381,13 @@ class BoostingTreeSelector(TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
-        
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
+
 
 class ManualSelector(TransformerMixin):
     def __init__(self, drop_features=None):
@@ -368,16 +406,22 @@ class ManualSelector(TransformerMixin):
         df_res = pd.DataFrame(
             {
                 "feature": feature_list,
-                "selected": [True if c in self.selected_features else False for c in feature_list],
+                "selected": [
+                    True if c in self.selected_features else False for c in feature_list
+                ],
             }
         )
         self.detail = df_res
         self.summary()
         return self
-        
+
     def transform(self, X, y=None):
         return X[self.selected_features]
-    
+
     def summary(self):
-        print(f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n")
-        print("\n===============================================================================")
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )

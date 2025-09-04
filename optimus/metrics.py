@@ -59,10 +59,10 @@ class Metrics:
     def get_iv(cls, df_label, df_feature):
         df_stat = cls.get_stat(df_label, df_feature)
         return df_stat["iv"].sum()
-    
-    @ classmethod
+
+    @classmethod
     def get_psi(cls, df_train, df_test):
-        test_prop = pd.Series(df_train).value_counts(normalize = True, dropna = False)
-        base_prop = pd.Series(df_test).value_counts(normalize = True, dropna = False)
-        
+        test_prop = pd.Series(df_train).value_counts(normalize=True, dropna=False)
+        base_prop = pd.Series(df_test).value_counts(normalize=True, dropna=False)
+
         return np.sum((test_prop - base_prop) * np.log(test_prop / base_prop))
