@@ -353,7 +353,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         while X.nunique() > self.target_bin_cnt:
             df_woe = self._get_woe(X, y)
             df_woe['woe_diff'] = df_woe.woe.diff()
-            min_diff_idx = df_woe.woe_diff.argmax()
+            min_diff_idx = df_woe.woe_diff.argmin()
             to_merge_cols = [df_woe.index[min_diff_idx-1], df_woe.index[min_diff_idx]]
             # assign new name to merged categories
             if "__OTHERS__" in to_merge_cols:
