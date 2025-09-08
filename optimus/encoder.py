@@ -191,7 +191,12 @@ class Encoder(BaseEstimator, TransformerMixin):
         res["good_rate"] = res["good"] / res["bin_total"]
         res["good_dist"] = res["good"] / total_good
         res["cum_good_dist"] = np.cumsum(res.good_dist)
-        res["ks"] = np.abs(res["cum_bad_dist"] - res["cum_good_dist"])
+        res["ks"] = res.apply(
+            lambda row: np.abs(row["cum_bad_dist"] - row["cum_good_dist"])
+            if row["bin_type"] == "bin_normal"
+            else np.nan,
+            axis=1,
+        )
         res["lift"] = res["bad_rate"] / (total_bad / total)
         # should not compute a new woe value in transform. If the value is not in training data, use the mean woe value of all bins.
         res["woe"] = (
