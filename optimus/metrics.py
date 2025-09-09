@@ -62,7 +62,11 @@ class Metrics:
 
     @classmethod
     def get_psi(cls, df_train, df_test):
-        test_prop = pd.Series(df_train).value_counts(normalize=True, dropna=False)
-        base_prop = pd.Series(df_test).value_counts(normalize=True, dropna=False)
+        base_prop = pd.Series(df_train).value_counts(
+            normalize=True, dropna=False
+        )  # 基准数据集
+        test_prop = pd.Series(df_test).value_counts(
+            normalize=True, dropna=False
+        )  # 测试数据集
 
         return np.sum((test_prop - base_prop) * np.log(test_prop / base_prop))

@@ -8,12 +8,14 @@ Optimus is a powerful machine learning toolkit specifically designed for the dev
 
 ### Key Advantages
 
+- **Comprehensive Training Pipeline**: End-to-end `Train` class for streamlined model development
 - **Professional Binning Strategies**: Support for multiple intelligent binning algorithms (ChiMerge, BestKS, WOEMerge, OptimalBinning, etc.)
 - **Smart Feature Selection**: Statistical metric-based feature filtering (IV, KS, Gini, PSI, VIF, correlation)
 - **Multi-Model Support**: Integration of mainstream algorithms like Logistic Regression, XGBoost, LightGBM
 - **Automated Hyperparameter Tuning**: Support for Grid Search and Bayesian Optimization
 - **Model Calibration**: Scorecard mapping and probability calibration functionality
 - **Professional Reports**: Automated generation of detailed modeling reports and visualizations
+- **Robust Architecture**: Enhanced error handling, input validation, and comprehensive documentation
 
 ## Quick Start
 
@@ -28,6 +30,26 @@ pip install -e .
 ```
 
 ### Basic Usage
+
+```python
+import pandas as pd
+from optimus.trainer import Train
+
+# Quick start with end-to-end pipeline
+trainer = Train(
+    model_path='./models',
+    model_type='LR',           # Logistic Regression
+    tune_method='BO'           # Bayesian Optimization
+)
+
+# Fit model (X: features, y: target, e: external data with sample_type)
+trainer.fit(X, y, e)
+
+# Generate predictions and reports
+performance = trainer.transform(X, y, e)
+```
+
+**Traditional Component-Based Approach:**
 
 ```python
 import pandas as pd
@@ -229,8 +251,17 @@ Automated professional modeling reports:
 ```python
 from optimus.reporter import Reporter
 
-reporter = Reporter('model_report.xlsx')
-reporter.generate_report(performance_data, id_column='customer_id')
+# Using the new v0.3.0 structure
+reporter = Reporter('./reports')
+reporter.generate_report(performance_data)
+
+# Reports automatically include:
+# - Sample overview and distribution analysis
+# - Feature statistics and WOE analysis  
+# - Feature selection details
+# - Model performance metrics
+# - Hyperparameter tuning results
+# - Model calibration analysis
 ```
 
 Report contents include:
@@ -243,13 +274,55 @@ Report contents include:
 
 ## Usage Examples
 
-### Complete Modeling Workflow
+### End-to-End Training Pipeline (v0.3.0)
+
+```python
+import pandas as pd
+from optimus.trainer import Train
+
+# 1. Data preparation
+df = pd.read_csv('credit_data.csv')
+X = df.drop(['target', 'sample_type'], axis=1)
+y = df['target']
+e = df[['sample_type']]  # Must contain 'train', 'test' sample types
+
+# 2. Initialize training pipeline
+trainer = Train(
+    model_path='./models',
+    report_path='./reports',
+    model_type='LR',           # Options: 'LR', 'XGB', 'LGBM'
+    tune_method='BO',          # Options: 'BO', 'GS'
+    score_type='mega_score',   # Options: 'mega_score', 'sub_score', 'probability'
+    max_evals=100,
+    corr_threshold=0.95,
+    iv_threshold=0.02,
+    version="v1.0"
+)
+
+# 3. Train the model
+trainer.fit(X, y, e)
+
+# 4. Generate predictions and reports
+performance = trainer.transform(X, y, e)
+
+# 5. Access results
+print("Model Performance:")
+print(performance['scorecard']['test'])
+print("\nFeature Selection Results:")
+print(performance['feature_selection'])
+```
+
+### Complete Modeling Workflow (Traditional Approach)
 
 ```python
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from optimus import *
+from optimus.encoder import Encoder
+from optimus.feature_selection import IVSelector, PSISelector, CorrSelector
+from optimus.estimator import Benchmark
+from optimus.calibrator import Calibration
+from optimus.reporter import Reporter
 
 # 1. Data loading
 df = pd.read_csv('credit_data.csv')
@@ -296,18 +369,80 @@ scores = calibrator.transform(y_prob)
 # 7. Report generation
 reporter = Reporter('credit_model_report.xlsx')
 performance_data = {
-    'df_res': pd.concat([X_test, y_test, 
-                        pd.Series(y_prob, name='proba'),
-                        pd.Series(scores, name='score')], axis=1),
-    'benchmark': model,
-    'calibrate_detail': calibrator.calibrate_detail
+    'sample_set': {
+        'test': {
+            'X': X_test,
+            'y': y_test,
+            'e': pd.DataFrame({
+                'sample_type': ['test'] * len(X_test),
+                'proba': y_prob,
+                'score': scores
+            })
+        }
+    },
+    'model_id': '20241201_143022',
+    'label': 'target',
+    'missing_values': [-999, 'NULL'],
+    'calibrate_detail': calibrator.calibrate_detail,
+    'scorecard': {'test': calibrator.compare_calibrate_result(scores, y_test)}
 }
-reporter.generate_report(performance_data, 'customer_id')
+reporter.generate_report(performance_data)
+```
+
+### Advanced Pipeline Configuration
+
+```python
+from optimus.pipeliner import Preprocess, Model
+
+# Custom preprocessing pipeline
+preprocessor = Preprocess(
+    corr_threshold=0.9,
+    psi_threshold=0.15,
+    iv_threshold=0.03,
+    vif_threshold=5,
+    ignore_preprocessors=['VIF'],  # Skip VIF selection
+    drop_features=['id', 'timestamp']  # Manual feature removal
+)
+
+# Feature specification
+feature_spec = {
+    'age': 'bestKS',           # Numerical feature using BestKS binning
+    'income': 'chiMerge',      # Numerical feature using ChiMerge binning
+    'occupation': 'woeMerge',   # Categorical feature using WOE merging
+    'education': [1, 2, 3, 4]   # Custom binning boundaries
+}
+
+# Build pipeline
+pipeline = preprocessor.build_pipeline(feature_spec)
+
+# Custom model with hyperparameter tuning
+model_builder = Model(
+    model_type='XGB',
+    tune_method='BO',
+    max_evals=200,
+    param_grid={
+        'n_estimators': [100, 200, 300],
+        'max_depth': [3, 5, 7],
+        'learning_rate': [0.01, 0.1, 0.2]
+    }
+)
+
+model_tuner = model_builder.build_model()
 ```
 
 ## Release Notes
 
-### v0.2.0 (Current Version)
+### v0.3.0 (Current Version)
+- **Enhanced Training Pipeline**: Introduced comprehensive `Train` class for end-to-end model training
+- **Improved Pipeline Architecture**: Added advanced `Preprocess` and `Model` classes for streamlined workflows
+- **Advanced Feature Selection**: Enhanced feature selection with VIF bug fixes and improved stability checks
+- **Better Report Generation**: Overhauled reporting system with automatic file organization and enhanced visualizations
+- **Robust Error Handling**: Added comprehensive input validation and error messages throughout the pipeline
+- **PSI Calculation Fix**: Corrected Population Stability Index calculation for accurate distribution comparisons
+- **Extended Documentation**: Added detailed function documentation and usage examples for all major components
+- **Flexible Sample Types**: Support for custom sample types beyond train/test for comprehensive model evaluation
+
+### v0.2.0 (Previous Version)
 - **New Feature**: Integrated OptimalBinning algorithm into binner
 - Added OptimalCut class for smarter optimal binning
 - Fixed several issues with categorical feature handling

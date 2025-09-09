@@ -1,7 +1,9 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.3.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
+
+import os
 
 import pandas as pd
 from openpyxl.utils import get_column_letter
@@ -11,7 +13,7 @@ from .metrics import Metrics
 
 
 class Reporter:
-    def __init__(self, report_path):
+    def __init__(self, report_path=None):
         self.report_path = report_path
 
     @classmethod
@@ -267,46 +269,28 @@ class Reporter:
             }
         )
 
-    def generate_sample_overview_report(self, writer, res_all, label, id_col):
-        df_basic_summary = res_all.groupby("sample_type").agg(
-            sample_size=(id_col, "count"),
-            sample_size_pct=(id_col, lambda x: x.count() / res_all.shape[0]),
-            positive_rate=(label, lambda x: x.mean()),
+    def generate_sample_overview_report(self, writer, sample_set, label):
+        df_extra = pd.concat([sample["e"] for _, sample in sample_set.items()])
+        df_basic_summary = df_extra.groupby("sample_type").agg(
+            sample_size=("sample_type", "size"),
+            sample_size_pct=("sample_type", lambda x: x.size / df_extra.shape[0]),
+            positive_rate=(label, "mean"),
+            PSI=(
+                "score",
+                lambda x: Metrics.get_psi(x, sample_set["train"]["e"]["score"]),
+            ),
         )
-        if "score" in res_all.columns:
-            df_psi = pd.DataFrame(
-                [
-                    Metrics.get_psi(
-                        res_all[res_all["sample_type"] == "train"]["score"],
-                        res_all[res_all["sample_type"] == "train"]["score"],
-                    ),
-                    Metrics.get_psi(
-                        res_all[res_all["sample_type"] == "train"]["score"],
-                        res_all[res_all["sample_type"] == "test"]["score"],
-                    ),
-                    Metrics.get_psi(
-                        res_all[res_all["sample_type"] == "train"]["score"],
-                        res_all[res_all["sample_type"] == "extra"]["score"],
-                    ),
-                ],
-                index=["train", "test", "extra"],
-                columns=["PSI"],
-            )
-            df_basic_summary = pd.concat([df_basic_summary, df_psi], axis=1)
         df_basic_summary.sort_index(ascending=False).to_excel(
             writer, sheet_name="Sample Overview - Statistics", freeze_panes=(1, 1)
         )
         self._format_overview_stats_df(writer.sheets["Sample Overview - Statistics"])
 
-        if "proba" in res_all.columns and "bm_proba" in res_all.columns:
-            res_all.groupby("sample_type").apply(
-                self._stat_perf, target_label=label
-            ).droplevel(level=1).sort_index(ascending=False).to_excel(
-                writer, sheet_name="Sample Overview - Performance", freeze_panes=(1, 1)
-            )
-            self._format_overview_perf_df(
-                writer.sheets["Sample Overview - Performance"]
-            )
+        df_extra.groupby("sample_type").apply(
+            self._stat_perf, target_label=label
+        ).droplevel(level=1).sort_index(ascending=False).to_excel(
+            writer, sheet_name="Sample Overview - Performance", freeze_panes=(1, 1)
+        )
+        self._format_overview_perf_df(writer.sheets["Sample Overview - Performance"])
 
     def generate_single_feature_eda_report(
         self, writer, X, y, woe_df, missing_values, prefix=""
@@ -325,10 +309,10 @@ class Reporter:
         self._format_feat_df(writer.sheets[f"{prefix} - Feature Overview"])
         self._format_woe_df(writer.sheets[f"{prefix} - Feature Binning Report"])
 
-    def generate_feature_selection_report(self, writer, original_cols, selectors):
-        original_cols = pd.DataFrame(original_cols, columns=["feature"]).set_index(
-            "feature"
-        )
+    def generate_feature_selection_report(self, writer, selectors):
+        original_cols = pd.DataFrame(
+            selectors["Original"].selected_features, columns=["feature"]
+        ).set_index("feature")
         for name, selector in selectors.steps:
             original_cols.loc[selector.selected_features, name] = 1
             original_cols[name] = original_cols[name].fillna(0)
@@ -383,33 +367,32 @@ class Reporter:
             )
         self._format_calibration_reg_df(writer.sheets["Calibration - Regression"])
 
-    def generate_report(self, performance, id_col, **kwargs):
-        df_res = performance["df_res"]
-        writer = pd.ExcelWriter(self.report_path, engine="openpyxl")
+    def generate_report(self, performance, **kwargs):
+        writer = pd.ExcelWriter(
+            os.path.join(
+                self.report_path, f"model_report_{performance['model_id']}.xlsx"
+            ),
+            engine="openpyxl",
+        )
         self.generate_sample_overview_report(
-            writer, df_res, performance["label"], id_col
+            writer, performance["sample_set"], performance["label"]
         )
         if "woe_df" in performance:
-            for sample_type in performance["woe_df"]:
-                X = df_res.loc[
-                    df_res["sample_type"] == sample_type, performance["original_cols"]
-                ].copy()
-                y = df_res.loc[
-                    df_res["sample_type"] == sample_type, performance["label"]
-                ].copy()
+            for sample_type, woe_df in performance["woe_df"].items():
                 self.generate_single_feature_eda_report(
                     writer,
-                    X,
-                    y,
-                    performance["woe_df"][sample_type],
+                    performance["sample_set"][sample_type]["X"],
+                    performance["sample_set"][sample_type]["y"],
+                    woe_df,
                     performance["missing_values"],
                     sample_type,
                 )
-        if "original_cols" in performance and "feature_selection" in performance:
+        if "feature_selection" in performance:
             self.generate_feature_selection_report(
-                writer, performance["original_cols"], performance["feature_selection"]
+                writer, performance["feature_selection"]
             )
-        self.generate_benchmark_report(writer, performance["benchmark"])
+        if "benchmark" in performance:
+            self.generate_benchmark_report(writer, performance["benchmark"])
         if "tune_results" in performance:
             self.generate_model_tuning_report(writer, performance["tune_results"])
         if "calibrate_detail" in performance and "scorecard" in performance:

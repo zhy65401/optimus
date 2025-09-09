@@ -277,9 +277,10 @@ class VIFSelector(TransformerMixin):
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
 
         # compute VIF
+        X_subset = X[feature_list]
         vif = [
-            variance_inflation_factor(X.values, i)
-            for i in range(X[feature_list].shape[1])
+            variance_inflation_factor(X_subset.values, i)
+            for i in range(X_subset.shape[1])
         ]
 
         # select features with VIF < vif_threshold
