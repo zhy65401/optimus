@@ -2,6 +2,7 @@ import os
 from datetime import datetime
 
 import joblib
+import numpy as np
 import pandas as pd
 from termcolor import cprint
 
@@ -116,6 +117,11 @@ class Train:
         )
         self.ignore_preprocessors = kwargs.get("ignore_preprocessors", [])
         self.drop_features = kwargs.get("drop_features", [])
+
+        self.score_bins = kwargs.get(
+            "score_bins", [0, 300, 400, 500, 550, 600, 650, 700, 750, 800, 850, 1000]
+        )
+        self.sample_types = kwargs.get("sample_types", ["train", "test"])
 
     def fit(self, X: pd.DataFrame, y: pd.Series, e: pd.DataFrame):
         """
@@ -287,7 +293,10 @@ class Train:
             raise ValueError("Please provide a timestamp to transform.")
         if "sample_type" not in e:
             raise KeyError("external data must contain 'sample_type' column.")
-        sample_types = e["sample_type"].unique().tolist()
+        # Make sure train and test are in the first place
+        sample_types = self.sample_types + list(
+            set(e["sample_type"].unique().tolist()) - set(self.sample_types)
+        )
         if len(sample_types) > 10:
             raise ValueError(f"Over 10 sample types: {sample_types}!")
         # Load model artifacts
@@ -315,6 +324,8 @@ class Train:
         sample_set = {}
         woe_dfs = {}
         scorecards = {}
+        df_distribution = []
+        score_psi = {}
 
         for sample_type in sample_types:
             sample_mask = e["sample_type"] == sample_type
@@ -336,8 +347,40 @@ class Train:
             e_.loc[:, "bm_proba"] = [round(i, 6) for i in bm_proba]
             e_.loc[:, "proba"] = [round(i, 6) for i in proba]
             e_.loc[:, "score"] = [int(i) for i in score]
+            e_.loc[:, "score_bin"] = pd.cut(e_["score"], bins=self.score_bins)
+
+            score_dist = (
+                e_.groupby(["score_bin"])
+                .agg(
+                    total=("score", "count"),
+                    pct=("score", lambda x: len(x) / e_.shape[0]),
+                )
+                .sort_index()
+            )
+            score_dist.columns = pd.MultiIndex.from_tuples(
+                [(sample_type, i) for i in ["# Score", "% Score"]]
+            )
+            df_distribution.append(score_dist)
 
             sample_set[sample_type] = {"X": X_, "y": y_, "e": e_}
+
+        df_distribution = pd.concat(df_distribution, axis=1)
+        df_psi = (
+            df_distribution.apply(
+                lambda x: (
+                    np.sum(
+                        (x - df_distribution[("train", "% Score")])
+                        * np.log(x / df_distribution[("train", "% Score")])
+                    )
+                    if x.name[1] == "% Score"
+                    else np.nan
+                )
+            )
+            .dropna()
+            .droplevel(1)
+            .to_frame(name="% Score PSI")
+            .sort_values("% Score PSI")
+        )
 
         performance = {
             "version": self.version,
@@ -347,6 +390,7 @@ class Train:
             "feature_selection": preprocess_pipe["FS"],
             "tune_results": tuner.results,
             "calibrate_detail": calibrator.calibrate_detail,
+            "scoredist": {"Distribution": df_distribution, "PSI": df_psi},
             "scorecard": scorecards,
             "woe_df": woe_dfs,
             "sample_set": sample_set,

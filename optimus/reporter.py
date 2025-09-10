@@ -152,6 +152,20 @@ class Reporter:
         ]
         Reporter._set_col_width(worksheet, w15, 15)
 
+    def _format_calibration_scoredist_df(self, worksheet):
+        perc_cols = ["C", "E", "G", "I", "K", "M", "O", "Q", "S", "U"]
+        Reporter._set_col_format(worksheet, perc_cols, "0.000%")
+        w15 = ["C", "E", "G", "I", "K", "M", "O", "Q", "S", "U"]
+        Reporter._set_col_width(worksheet, w15, 15)
+
+    def _format_calibration_score_psi_df(self, worksheet):
+        perc_cols = ["B"]
+        Reporter._set_col_format(worksheet, perc_cols, "0.000%")
+        w15 = ["B"]
+        Reporter._set_col_width(worksheet, w15, 15)
+        w20 = ["A"]
+        Reporter._set_col_width(worksheet, w20, 20)
+
     def _stat_feat(self, X, y, woe_df, missing_values):
         feature_summaries = []
         for column in X.columns:
@@ -280,6 +294,7 @@ class Reporter:
                 lambda x: Metrics.get_psi(x, sample_set["train"]["e"]["score"]),
             ),
         )
+        df_basic_summary.columns = ["# Sample", "% Sample", "% Bad", "% PSI"]
         df_basic_summary.sort_index(ascending=False).to_excel(
             writer, sheet_name="Sample Overview - Statistics", freeze_panes=(1, 1)
         )
@@ -304,7 +319,7 @@ class Reporter:
             writer, sheet_name=f"{prefix} - Feature Overview", freeze_panes=(1, 1)
         )
         woe_df.to_excel(
-            writer, sheet_name=f"{prefix} - Feature Binning Report", freeze_panes=(2, 2)
+            writer, sheet_name=f"{prefix} - Feature Binning Report", freeze_panes=(3, 2)
         )
         self._format_feat_df(writer.sheets[f"{prefix} - Feature Overview"])
         self._format_woe_df(writer.sheets[f"{prefix} - Feature Binning Report"])
@@ -352,10 +367,14 @@ class Reporter:
             )
             self._format_tuning_df(writer.sheets["Model - Tuning Report"])
 
-    def generate_calibration_report(self, writer, calibrate_detail, scorecard):
+    def generate_calibration_report(
+        self, writer, calibrate_detail, scorecard, scoredist
+    ):
         calibrate_detail.to_excel(
             writer, sheet_name="Calibration - Regression", freeze_panes=(1, 1)
         )
+        self._format_calibration_reg_df(writer.sheets["Calibration - Regression"])
+
         for name, df_scorecard in scorecard.items():
             df_scorecard.to_excel(
                 writer,
@@ -365,7 +384,21 @@ class Reporter:
             self._format_calibration_scorecard_df(
                 writer.sheets[f"Calibration - {name} Score Card"]
             )
-        self._format_calibration_reg_df(writer.sheets["Calibration - Regression"])
+
+        scoredist["Distribution"].to_excel(
+            writer,
+            sheet_name=f"Calibration - Score Distribution",
+            freeze_panes=(3, 1),
+        )
+        scoredist["PSI"].to_excel(
+            writer,
+            sheet_name=f"Calibration - Score PSI",
+            freeze_panes=(1, 1),
+        )
+        self._format_calibration_scoredist_df(
+            writer.sheets[f"Calibration - Score Distribution"]
+        )
+        self._format_calibration_score_psi_df(writer.sheets[f"Calibration - Score PSI"])
 
     def generate_report(self, performance, **kwargs):
         writer = pd.ExcelWriter(
@@ -395,8 +428,15 @@ class Reporter:
             self.generate_benchmark_report(writer, performance["benchmark"])
         if "tune_results" in performance:
             self.generate_model_tuning_report(writer, performance["tune_results"])
-        if "calibrate_detail" in performance and "scorecard" in performance:
+        if (
+            "calibrate_detail" in performance
+            and "scorecard" in performance
+            and "scoredist" in performance
+        ):
             self.generate_calibration_report(
-                writer, performance["calibrate_detail"], performance["scorecard"]
+                writer,
+                performance["calibrate_detail"],
+                performance["scorecard"],
+                performance["scoredist"],
             )
         writer.close()
