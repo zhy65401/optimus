@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.3.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
 import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -13,44 +14,105 @@ from sklearn.base import TransformerMixin
 
 class Calibration(TransformerMixin):
     """
-    A score calibration helper.
+    A comprehensive score calibration system for credit scoring and risk modeling.
 
-    Score Types
+    This class provides multiple score calibration strategies to transform predicted
+    probabilities into interpretable credit scores or risk ratings.
+
+    Score Types:
     -----------
     'mega_score':
-         mega_score calibration applies to Ascore and Bscore
-         score scale 300~1000, 850 -> 0.1%, 500 -> 12.8%
+         Standard credit score calibration (300-1000 scale)
+         850 corresponds to ~0.1% bad rate, 500 to ~12.8% bad rate
+         Commonly used for consumer credit scoring
 
     'sub_score':
-         sub_score calibration applies to the sub-score of Ascore and Bscore
-         score scale 0~100, 95 -> 0.1%, 10 -> 12.8%
+         Sub-score calibration for component scores (0-100 scale)
+         95 corresponds to ~0.1% bad rate, 10 to ~12.8% bad rate
+         Useful for decomposed risk assessment
 
     'self-defining':
-         self-defining score scale
-         must input mapping_base, score_cap, score_floor in fit
+         Custom score scale with user-defined mapping
+         Requires mapping_base, score_cap, and score_floor parameters
+         Flexible for specific business requirements
 
     'probability':
-         only calibrate probability
+         Probability calibration only (0-1 scale)
+         Ensures predicted probabilities match observed frequencies
+         Useful when interpretable probabilities are preferred over scores
 
-    Notes
+    Attributes:
+        n_bins: Number of bins for calibration binning
+        n_degree: Polynomial degree for probability calibration
+        score_type: Type of score calibration to apply
+        mapping_base: Custom mapping dictionary for 'self-defining' type
+        score_cap: Maximum score value
+        score_floor: Minimum score value
+        calibrate_detail: Detailed calibration results and diagnostics
+
+    Examples:
+        >>> # Standard credit score calibration
+        >>> calibrator = Calibration(score_type='mega_score')
+        >>> calibrator.fit(y_prob, y_true)
+        >>> scores = calibrator.transform(y_prob_test)
+
+        >>> # Custom score mapping
+        >>> calibrator = Calibration(
+        ...     score_type='self-defining',
+        ...     mapping_base={600: 0.05, 700: 0.02, 800: 0.01},
+        ...     score_cap=850,
+        ...     score_floor=300
+        ... )
+
+        >>> # Probability calibration only
+        >>> calibrator = Calibration(score_type='probability')
+        >>> calibrated_probs = calibrator.transform(y_prob)
+
+    Notes:
     -----
-    Must check the probability calibration process:
-         calling Calibration.calibrate_detail and Calibration.get_calibrate_plot()
-
-    Must check the distribution and risk level of calibration results:
-         calling Calibration.compare_calibrate_result(df_score, df_label)
-
+    Always validate calibration quality using:
+    - calibrate_detail: Check calibration statistics and reliability
+    - get_calibrate_plot(): Visualize calibration curve
+    - compare_calibrate_result(): Analyze score distribution and performance
     """
 
     def __init__(
         self,
-        n_bins=25,
-        n_degree=1,
-        score_type="mega_score",
-        mapping_base=None,
-        score_cap=None,
-        score_floor=None,
-    ):
+        n_bins: int = 25,
+        n_degree: int = 1,
+        score_type: str = "mega_score",
+        mapping_base: Optional[Dict[int, float]] = None,
+        score_cap: Optional[float] = None,
+        score_floor: Optional[float] = None,
+    ) -> None:
+        """
+        Initialize the Calibration transformer.
+
+        Args:
+            n_bins: Number of bins for calibration analysis and probability binning
+            n_degree: Polynomial degree for probability calibration curve fitting
+            score_type: Type of score calibration:
+                - 'mega_score': Standard credit score (300-1000)
+                - 'sub_score': Component score (0-100)
+                - 'self-defining': Custom score with user mapping
+                - 'probability': Calibrated probabilities only
+            mapping_base: Custom score-to-probability mapping for 'self-defining' type.
+                Format: {score: probability}, e.g., {600: 0.05, 700: 0.02}
+            score_cap: Maximum score value for 'self-defining' type
+            score_floor: Minimum score value for 'self-defining' type
+
+        Examples:
+            >>> # Standard usage
+            >>> calibrator = Calibration()
+
+            >>> # Custom score mapping
+            >>> calibrator = Calibration(
+            ...     score_type='self-defining',
+            ...     mapping_base={500: 0.1, 600: 0.05, 700: 0.02},
+            ...     score_cap=800,
+            ...     score_floor=400
+            ... )
+        """
         self.mapping_base = mapping_base
         self.score_cap = score_cap
         self.score_floor = score_floor
@@ -58,12 +120,35 @@ class Calibration(TransformerMixin):
         self.n_bins = n_bins
         self.n_degree = n_degree
 
-        self.calibrate_detail = None
-        self.calibrate_coef = None
-        self.mapping_intercept = None
-        self.mapping_slope = None
+        # Results and fitted parameters
+        self.calibrate_detail: Optional[pd.DataFrame] = None
+        self.calibrate_coef: Optional[np.ndarray] = None
+        self.mapping_intercept: Optional[float] = None
+        self.mapping_slope: Optional[float] = None
 
-    def fit(self, df_prob, df_label):
+    def fit(
+        self,
+        df_prob: Union[pd.Series, np.ndarray],
+        df_label: Union[pd.Series, np.ndarray],
+    ) -> "Calibration":
+        """
+        Fit the calibration model using predicted probabilities and true labels.
+
+        This method learns the calibration parameters by analyzing the relationship
+        between predicted probabilities and observed frequencies.
+
+        Args:
+            df_prob: Predicted probabilities from the model
+            df_label: True binary labels (0 or 1)
+
+        Returns:
+            self: Fitted calibration instance
+
+        Examples:
+            >>> calibrator = Calibration(score_type='mega_score')
+            >>> calibrator.fit(y_prob_train, y_true_train)
+            >>> print("Calibration fitted successfully")
+        """
         """
         Fit the calibration model. The purpose is to calibrate the output from a classifier to a score, so that each score bin will have a similar bad rate.
         The idea is to build a linear regression between the ln(odds(y_hat)) and the real bad rate in each bin in the training set.

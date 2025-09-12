@@ -1,10 +1,11 @@
 #!/usr/bin/env python
-# Version: 0.2.0
+# Version: 0.3.0
 # Created: 2024-04-07
 # Last Modified: 2025-08-19
 # Author: ["Hanyuan Zhang"]
 
 import warnings
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -16,38 +17,124 @@ from .binner import BestKSCut, ChiMergeCut, OptimalCut, QCut, SimpleCut, WOEMerg
 
 
 class Encoder(BaseEstimator, TransformerMixin):
+    """
+    Weight of Evidence (WOE) encoder for feature transformation and binning.
+
+    This encoder transforms features using Weight of Evidence encoding, which is
+    commonly used in credit scoring and risk modeling. It supports multiple
+    binning strategies for both numerical and categorical features.
+
+    Attributes:
+        spec: Dictionary mapping feature names to binning strategies
+        bin_info: Dictionary containing WOE mappings for each feature
+        woe_df: DataFrame containing detailed WOE analysis (generated when y is provided to transform)
+        missing_values: List of values to treat as missing
+        treat_missing: Strategy for handling missing values ('mean', 'min', 'max', 'zero')
+        keep_dtypes: Whether to preserve original data types after transformation
+        copy: Whether to make a copy of input data
+
+    Examples:
+        >>> from optimus.encoder import Encoder
+        >>> import pandas as pd
+        >>>
+        >>> # Sample data
+        >>> X = pd.DataFrame({
+        ...     'age': [25, 35, 45, 55, 65],
+        ...     'income': [30000, 50000, 70000, 90000, 110000],
+        ...     'education': ['high_school', 'bachelor', 'master', 'phd', 'bachelor']
+        ... })
+        >>> y = pd.Series([0, 0, 1, 1, 1])
+        >>>
+        >>> # Define binning strategies
+        >>> spec = {
+        ...     'age': 'bestKS',           # Best KS binning for numerical
+        ...     'income': 'chiMerge',      # Chi-merge binning for numerical
+        ...     'education': 'woeMerge'    # WOE merge for categorical
+        ... }
+        >>>
+        >>> # Fit and transform
+        >>> encoder = Encoder(spec=spec)
+        >>> encoder.fit(X, y)
+        >>> X_woe = encoder.transform(X, y)  # y provided to generate woe_df
+        >>>
+        >>> # Access WOE analysis
+        >>> print(encoder.woe_df)
+    """
+
     def __init__(
         self,
-        spec: dict,
-        missing_values: list = None,
+        spec: Dict[str, Union[str, List[float]]],
+        missing_values: Optional[List[Union[int, str]]] = None,
         treat_missing: str = "mean",
-        keep_dtypes=False,
-        copy=True,
-    ):
+        keep_dtypes: bool = False,
+        copy: bool = True,
+    ) -> None:
         """
+        Initialize the WOE Encoder.
+
         Args:
-            spec (dict): A dictionary for features and binning strategy. The strategy should be a list or
-                one of ('auto', 'qcut', 'chiMerge', 'bestKS', 'woeMerge', 'simple'), default 'auto'.
-            copy (bool, optional)
+            spec: Dictionary mapping feature names to binning strategies.
+                Strategies can be:
+                - 'auto': Automatically choose best strategy
+                - 'qcut': Equal frequency binning
+                - 'chiMerge': Chi-square based binning
+                - 'bestKS': KS statistic based binning
+                - 'woeMerge': WOE based categorical merging
+                - 'optimal': Optimal binning using OptimalBinning
+                - 'simple': Simple binning
+                - List[float]: Custom bin edges
+                - False: No binning (use original categories)
+            missing_values: List of values to treat as missing (default: [-990000, "__N.A__"])
+            treat_missing: Strategy for missing value treatment:
+                - 'mean': Use mean of normal WOE values
+                - 'min': Use minimum WOE value
+                - 'max': Use maximum WOE value
+                - 'zero': Use 0
+            keep_dtypes: Whether to preserve original data types after transformation
+            copy: Whether to make a copy of input data during processing
+
+        Raises:
+            ValueError: If invalid treat_missing strategy is provided
         """
         self.spec = spec
-        self.bin_info = {}
-        self.woe_df = None
+        self.bin_info: Dict[str, Dict] = {}
+        self.woe_df: Optional[pd.DataFrame] = None
         self.missing_values = missing_values or [-990000, "__N.A__"]
         self.treat_missing = treat_missing
         self.keep_dtypes = keep_dtypes
         self.copy = copy
-        self._bin_strategy = {}
-        self._feat_types = {}
-        self._bin_array = {}
-        self._cat_others = {}
+        self._bin_strategy: Dict[str, str] = {}
+        self._feat_types: Dict[str, str] = {}
+        self._bin_array: Dict[str, List] = {}
+        self._cat_others: Dict[str, List] = {}
         self._split_symbol = "||"
         self._eps = np.finfo(float).eps
 
-    def _split_dataset(self, X, y=None):
+    def _split_dataset(
+        self, X: pd.Series, y: Optional[pd.Series] = None
+    ) -> Tuple[pd.Series, pd.Series, Optional[pd.Series], Optional[pd.Series]]:
         """
-        This function will split features into normal and missing values.
-        The missing values include user-defined ones and NaN (which will be assign -990000) and None (which will be assign "__N.A__")
+        Split feature data into normal and missing value subsets.
+
+        This method identifies missing values based on NaN, None, and user-defined
+        missing values, then splits both feature and target data accordingly.
+
+        Args:
+            X: Feature series to split
+            y: Optional target series to split correspondingly
+
+        Returns:
+            Tuple containing:
+            - X_missing: Feature values identified as missing
+            - X_normal: Feature values not identified as missing
+            - y_missing: Target values corresponding to missing features (if y provided)
+            - y_normal: Target values corresponding to normal features (if y provided)
+
+        Examples:
+            >>> encoder = Encoder(spec={})
+            >>> X = pd.Series([1, 2, np.nan, 4, -990000])
+            >>> y = pd.Series([0, 1, 0, 1, 0])
+            >>> X_miss, X_norm, y_miss, y_norm = encoder._split_dataset(X, y)
         """
         missing_idc = X.apply(lambda x: pd.isna(x) or (x in self.missing_values))
         normal_idc = X.apply(
@@ -301,11 +388,35 @@ class Encoder(BaseEstimator, TransformerMixin):
                 )
                 self.bin_info[feat][at_least_bin] = res
 
-    def fit(self, X, y, **kwargs):
-        """Fitting the encoder.
+    def fit(
+        self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray], **kwargs: Any
+    ) -> "Encoder":
+        """
+        Fit the WOE encoder to the training data.
+
+        This method learns the WOE mappings for each feature based on the target variable.
+        It applies the specified binning strategy for each feature and calculates
+        corresponding WOE values.
+
+        Args:
+            X: Training feature data
+            y: Target binary labels (must be binary: 0 and 1)
+            **kwargs: Additional keyword arguments:
+                target_bin_cnt (int): Target number of bins (default: 5)
+                min_bin_rate (float): Minimum bin size ratio (default: 0.05)
+                monotonic_trend (str): Monotonic trend for optimal binning (default: 'auto_asc_desc')
 
         Returns:
-            self: Encoder
+            self: Fitted encoder instance
+
+        Raises:
+            ValueError: If target variable is not binary
+            KeyError: If features in spec are not found in X
+
+        Examples:
+            >>> encoder = Encoder(spec={'age': 'bestKS', 'income': 'chiMerge'})
+            >>> encoder.fit(X_train, y_train)
+            >>> print(f"Fitted {len(encoder.bin_info)} features")
         """
         cprint("[INFO] Fitting...", "white")
         if self.copy:
@@ -413,17 +524,35 @@ class Encoder(BaseEstimator, TransformerMixin):
         self._treat_missing()
         return self
 
-    def transform(self, X, y=None):
+    def transform(
+        self, X: pd.DataFrame, y: Optional[Union[pd.Series, np.ndarray]] = None
+    ) -> pd.DataFrame:
         """
-        Transforming the X with fitted encoder.
+        Transform features using fitted WOE encodings.
+
+        This method applies the learned WOE mappings to transform the input features.
+        If target variable y is provided, it also generates detailed WOE analysis
+        and stores it in self.woe_df.
 
         Args:
-            X: Input features to transform
-            y: Optional target variable. If provided, WOE DataFrame will be generated
-               and stored in self.woe_df
+            X: Input feature data to transform
+            y: Optional target variable. If provided:
+                - WOE DataFrame will be generated and stored in self.woe_df
+                - Enables access to detailed WOE statistics and analysis
 
         Returns:
-            outX: The transformed X with WOE values
+            pd.DataFrame: Transformed features with WOE values
+
+        Raises:
+            KeyError: If features haven't been fitted yet
+
+        Examples:
+            >>> # Transform without WOE analysis
+            >>> X_woe = encoder.transform(X_test)
+            >>>
+            >>> # Transform with WOE analysis generation
+            >>> X_woe = encoder.transform(X_test, y_test)
+            >>> woe_analysis = encoder.woe_df  # Access detailed analysis
         """
         cprint("[INFO] Transforming...", "white")
         if self.copy:

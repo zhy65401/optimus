@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
 
 import joblib
 import numpy as np
@@ -26,50 +27,92 @@ class Train:
         model_type (str): Type of model to train ('LR', 'XGB', 'LGBM')
         tune_method (str): Hyperparameter tuning method ('BO', 'GS')
         score_type (str): Type of score calibration ('mega_score', 'sub_score', etc.)
+
+    Examples:
+        >>> # Basic usage
+        >>> trainer = Train(
+        ...     model_path='./models',
+        ...     model_type='LR',
+        ...     tune_method='BO'
+        ... )
+        >>> trainer.fit(X, y, e)
+        >>> results = trainer.transform(X, y, e)
+
+        >>> # Advanced configuration
+        >>> trainer = Train(
+        ...     model_path='./models',
+        ...     report_path='./reports',
+        ...     model_type='XGB',
+        ...     tune_method='BO',
+        ...     max_evals=200,
+        ...     corr_threshold=0.9,
+        ...     iv_threshold=0.03
+        ... )
     """
 
     def __init__(
         self,
-        model_path: str = None,
-        report_path: str = None,
+        model_path: Optional[str] = None,
+        report_path: Optional[str] = None,
         model_type: str = "LR",
-        missing_values: list[str] = None,
+        missing_values: Optional[List[str]] = None,
         tune_method: str = "BO",
         n_bins: int = 25,
         n_degree: int = 1,
         max_evals: int = 100,
         score_type: str = "mega_score",
-        mapping_base: dict = None,
+        mapping_base: Optional[Dict[int, float]] = None,
         score_cap: float = 300,
         score_floor: float = 1000,
         version: str = "",
-        labeled_sample_type: list = None,
-        **kwargs,
-    ):
+        labeled_sample_type: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
         """
         Initialize the training pipeline with specified parameters.
 
         Args:
-            model_path (str, optional): Directory path for saving model artifacts. Required for fit().
-            report_path (str, optional): Directory path for saving model reports.
-            model_type (str): Machine learning model type. Options: 'LR', 'XGB', 'LGBM'. Default: 'LR'.
-            missing_values (list[str], optional): List of values to treat as missing. Default: predefined list.
-            tune_method (str): Hyperparameter tuning method. Options: 'BO' (Bayesian), 'GS' (Grid Search). Default: 'BO'.
-            n_bins (int): Number of bins for calibration. Default: 25.
-            n_degree (int): Polynomial degree for calibration. Default: 1.
-            max_evals (int): Maximum evaluations for hyperparameter tuning. Default: 100.
-            score_type (str): Score calibration type. Options: 'mega_score', 'sub_score', 'probability', 'self-defining'. Default: 'mega_score'.
-            mapping_base (dict, optional): Custom score mapping base for 'self-defining' score_type.
-            score_cap (float): Maximum score value. Default: 300.
-            score_floor (float): Minimum score value. Default: 1000.
-            version (str): Version identifier for tracking model versions.
-            labeled_sample_type (list, optional): Additional sample types with labels for scorecard generation.
-            **kwargs: Additional preprocessing parameters (corr_threshold, psi_threshold, iv_threshold, etc.)
+            model_path: Directory path for saving model artifacts
+            report_path: Directory path for saving model reports
+            model_type: Type of model to train. Options:
+                - 'LR': Logistic Regression
+                - 'XGB': XGBoost
+                - 'LGBM': LightGBM
+            missing_values: List of values to treat as missing
+            tune_method: Hyperparameter tuning method. Options:
+                - 'BO': Bayesian Optimization
+                - 'GS': Grid Search
+            n_bins: Number of bins for score calibration
+            n_degree: Degree for polynomial features in calibration
+            max_evals: Maximum evaluations for hyperparameter tuning
+            score_type: Type of score calibration. Options:
+                - 'mega_score': Standard credit score (300-850)
+                - 'sub_score': Sub-score (100-900)
+                - 'probability': Keep as probability
+            mapping_base: Custom score mapping dictionary
+            score_cap: Maximum score value
+            score_floor: Minimum score value
+            version: Version identifier for the model
+            labeled_sample_type: List of sample types to include in training
+            **kwargs: Additional parameters passed to preprocessing and modeling
 
         Raises:
             ValueError: If invalid model_type or tune_method is specified.
-        """
 
+        Examples:
+            >>> # Simple initialization
+            >>> trainer = Train(model_path='./models')
+
+            >>> # Advanced initialization with custom parameters
+            >>> trainer = Train(
+            ...     model_path='./models',
+            ...     model_type='XGB',
+            ...     tune_method='BO',
+            ...     max_evals=150,
+            ...     corr_threshold=0.95,
+            ...     iv_threshold=0.02
+            ... )
+        """
         self.ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.version = version
         self.model_path = model_path

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.3.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
@@ -139,10 +139,10 @@ class Logit(BaseEstimator, ClassifierMixin):
             self.model = sm.Logit(df_ytrain, df_xtrain_const).fit(
                 method="newton", maxiter=100
             )
-        except:
+        except (np.linalg.LinAlgError, ValueError, RuntimeError) as e:
             print(
-                "[WARNING]: exist strong correlated features, "
-                "got singular matrix in linear model, retry bfgs method instead."
+                f"[WARNING]: Newton method failed ({e}), "
+                "retrying with BFGS method instead."
             )
             self.model = sm.Logit(df_ytrain, df_xtrain_const).fit(
                 method="bfgs", maxiter=100
