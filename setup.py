@@ -2,9 +2,9 @@ from setuptools import find_packages, setup
 
 setup(
     name="optimus",
-    version="0.2.0",
+    version="0.3.0",
     packages=find_packages(),
-    description="Fluid Model Training Transformers",
+    description="Model Training Transformers and Analysis Tools",
     author="Hanyuan Zhang",
-    author_email="hanyuan@gofluid.io",
+    author_email="klesterchueng@gmail.com",
 )

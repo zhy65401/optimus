@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-# Version: 0.1.0
+# Version: 0.3.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
 import warnings
+from typing import Any, Dict, List, Optional, Union
 
 import lightgbm as lgb
 import numpy as np
@@ -17,11 +18,49 @@ warnings.filterwarnings("ignore")
 
 
 class Filter(TransformerMixin):
-    def __init__(self, extra_cols=None):
-        self.extra_cols_ = extra_cols or []
-        self.df_extra = None
+    """
+    A basic filter transformer for excluding specified columns from feature selection.
 
-    def fit(self, X, y=None):
+    This class allows you to specify certain columns that should be preserved
+    during the transformation process but not included in feature selection.
+
+    Attributes:
+        extra_cols_: List of column names to exclude from feature selection
+        df_extra: DataFrame containing the excluded columns
+        feature_names_: List of feature names after filtering
+
+    Examples:
+        >>> filter_trans = Filter(extra_cols=['id', 'timestamp'])
+        >>> filter_trans.fit(X)
+        >>> X_filtered = filter_trans.transform(X)
+    """
+
+    def __init__(self, extra_cols: Optional[List[str]] = None) -> None:
+        """
+        Initialize the Filter transformer.
+
+        Args:
+            extra_cols: List of column names to exclude from feature selection.
+                These columns will be preserved but not used in downstream processing.
+        """
+        self.extra_cols_ = extra_cols or []
+        self.df_extra: Optional[pd.DataFrame] = None
+        self.feature_names_: List[str] = []
+
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "Filter":
+        """
+        Fit the filter to identify feature columns.
+
+        Args:
+            X: Input feature matrix
+            y: Target variable (not used, for sklearn compatibility)
+
+        Returns:
+            self: Fitted transformer
+
+        Raises:
+            AssertionError: If extra_cols contains columns not in X
+        """
         assert (
             n := set(self.extra_cols_) - set(X.columns.tolist())
         ) == set(), f"Extra columns {n} not in X"
@@ -31,22 +70,97 @@ class Filter(TransformerMixin):
         self.df_extra = X[self.extra_cols_]
         return self
 
-    def transform(self, X, y=None):
+    def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
+        """
+        Transform by selecting only the feature columns.
+
+        Args:
+            X: Input feature matrix
+            y: Target variable (not used, for sklearn compatibility)
+
+        Returns:
+            pd.DataFrame: Filtered feature matrix
+        """
         return X[self.feature_names_]
 
 
 class CorrSelector(TransformerMixin):
+    """
+    Feature selector based on correlation analysis.
+
+    This selector removes highly correlated features using various strategies
+    to reduce multicollinearity while preserving predictive power.
+
+    Attributes:
+        detail: Dictionary containing correlation analysis details
+        selected_features: List of selected feature names
+        removed_features: List of removed feature names
+        corr_threshold: Correlation threshold for feature removal
+        user_feature_list: Optional list of specific features to consider
+        method: Method for handling correlated features
+
+    Examples:
+        >>> selector = CorrSelector(corr_threshold=0.95, method='iv_descending')
+        >>> selector.fit(X, y)
+        >>> X_selected = selector.transform(X)
+        >>> print(f"Removed {len(selector.removed_features)} correlated features")
+    """
+
     def __init__(
-        self, corr_threshold=0.95, user_feature_list=None, method="iv_descending"
-    ):
-        self.detail = dict()
-        self.selected_features = list()
-        self.removed_features = list()
+        self,
+        corr_threshold: float = 0.95,
+        user_feature_list: Optional[List[str]] = None,
+        method: str = "iv_descending",
+    ) -> None:
+        """
+        Initialize the correlation selector.
+
+        Args:
+            corr_threshold: Correlation threshold above which features are considered
+                highly correlated (default: 0.95)
+            user_feature_list: Optional list of specific features to consider.
+                If None, all features are considered.
+            method: Method for selecting which feature to keep from correlated pairs:
+                - 'iv_descending': Keep feature with higher Information Value
+                - 'random': Random selection
+
+        Examples:
+            >>> # Remove features with correlation > 0.9, prioritize by IV
+            >>> selector = CorrSelector(corr_threshold=0.9, method='iv_descending')
+
+            >>> # Only consider specific features
+            >>> selector = CorrSelector(
+            ...     corr_threshold=0.95,
+            ...     user_feature_list=['age', 'income', 'score'],
+            ...     method='iv_descending'
+            ... )
+        """
+        self.detail: Dict[str, Any] = {}
+        self.selected_features: List[str] = []
+        self.removed_features: List[str] = []
         self.corr_threshold = corr_threshold
         self.user_feature_list = user_feature_list
         self.method = method
 
-    def fit(self, X, y):
+    def fit(self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray]) -> "CorrSelector":
+        """
+        Fit the correlation selector to identify correlated features.
+
+        This method analyzes correlation between features and selects which
+        features to keep based on the specified method and threshold.
+
+        Args:
+            X: Input feature matrix
+            y: Target variable for calculating Information Value
+
+        Returns:
+            self: Fitted selector
+
+        Examples:
+            >>> selector = CorrSelector(corr_threshold=0.95)
+            >>> selector.fit(X_train, y_train)
+            >>> print(f"Selected {len(selector.selected_features)} features")
+        """
         print("[INFO]: Processing Correlation Selector...")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         lst_iv = [Metrics.get_iv(y, X[c]) for c in feature_list]
@@ -277,9 +391,10 @@ class VIFSelector(TransformerMixin):
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
 
         # compute VIF
+        X_subset = X[feature_list]
         vif = [
-            variance_inflation_factor(X.values, i)
-            for i in range(X[feature_list].shape[1])
+            variance_inflation_factor(X_subset.values, i)
+            for i in range(X_subset.shape[1])
         ]
 
         # select features with VIF < vif_threshold
