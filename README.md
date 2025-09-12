@@ -117,7 +117,7 @@ merged_feature = cat_binner.fit_transform(X['occupation'], y)
 #### WOE Encoding
 - Automatic handling of missing values and outliers
 - Support for custom missing value handling strategies
-- Generation of detailed WOE analysis reports
+- Integrated WOE analysis report generation
 
 ```python
 from optimus.encoder import Encoder
@@ -132,8 +132,11 @@ encoder = Encoder(
     treat_missing='mean'            # Missing value handling strategy
 )
 
+# Transform data and automatically generate WOE report when y is provided
 X_encoded = encoder.fit_transform(X, y)
-woe_report = encoder.get_woe_df(X, y)
+
+# Access WOE analysis report (automatically generated)
+woe_report = encoder.woe_df
 ```
 
 ### Feature Selection
@@ -446,6 +449,7 @@ model_tuner = model_builder.build_model()
 - **PSI Calculation Fix**: Corrected Population Stability Index calculation for accurate distribution comparisons
 - **Extended Documentation**: Added detailed function documentation and usage examples for all major components
 - **Flexible Sample Types**: Support for custom sample types beyond train/test for comprehensive model evaluation
+- **Encoder Code Simplification**: Merged `get_woe_df()` functionality into `transform()` method - when target variable `y` is provided, WOE DataFrame is automatically generated and stored in `self.woe_df`, eliminating the need for separate method calls
 
 ### v0.2.0 (Previous Version)
 - **New Feature**: Integrated OptimalBinning algorithm into binner

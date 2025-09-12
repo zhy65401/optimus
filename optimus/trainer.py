@@ -325,7 +325,6 @@ class Train:
         woe_dfs = {}
         scorecards = {}
         df_distribution = []
-        score_psi = {}
 
         for sample_type in sample_types:
             sample_mask = e["sample_type"] == sample_type
@@ -335,7 +334,8 @@ class Train:
 
             transX = preprocess_pipe.transform(X_)
             if sample_type in self.labeled_sample_type:
-                woe_dfs[sample_type] = preprocess_pipe["WOE"].get_woe_df(X_, y_)
+                preprocess_pipe["WOE"].transform(X_, y_)
+                woe_dfs[sample_type] = preprocess_pipe["WOE"].woe_df
 
             bm_proba = preprocess_pipe["Benchmark"].predict_proba(transX)[:, 1]
             proba = model.predict_proba(transX)[:, 1]

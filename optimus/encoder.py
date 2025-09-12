@@ -32,6 +32,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         """
         self.spec = spec
         self.bin_info = {}
+        self.woe_df = None
         self.missing_values = missing_values or [-990000, "__N.A__"]
         self.treat_missing = treat_missing
         self.keep_dtypes = keep_dtypes
@@ -416,8 +417,13 @@ class Encoder(BaseEstimator, TransformerMixin):
         """
         Transforming the X with fitted encoder.
 
+        Args:
+            X: Input features to transform
+            y: Optional target variable. If provided, WOE DataFrame will be generated
+               and stored in self.woe_df
+
         Returns:
-            outX: The transformed X
+            outX: The transformed X with WOE values
         """
         cprint("[INFO] Transforming...", "white")
         if self.copy:
@@ -430,31 +436,62 @@ class Encoder(BaseEstimator, TransformerMixin):
 
         original_dtypes = outX.dtypes
         idx = 0
+        woe_info = [] if y is not None else None
+
         for feat in X.columns:
             idx += 1
             cprint(f"[INFO] {idx}/{outX.shape[1]} Process {feat}", "white")
-            X_missing, X_normal, _, _ = self._split_dataset(outX[feat])
+
+            X_missing, X_normal, y_missing, y_normal = self._split_dataset(
+                outX[feat], y
+            )
             outX.loc[X_missing.index, feat] = X_missing
+            bins_categrories = pd.Series([], name=feat)
+
             if not X_normal.empty:
                 if self._feat_types[feat] == "numerical":
-                    bins_series = pd.cut(
+                    bins_categrories = pd.cut(
                         X_normal, self._bin_array[feat], include_lowest=True
                     )
-                    binned_data = bins_series.map(self.bin_info[feat]).astype(float)
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
+                        float
+                    )
                 else:
-                    bin_labels = outX[feat].map(
+                    bins_categrories = outX[feat].map(
                         lambda x: self._cat_bin_mapping(
                             x, self._bin_array[feat], self._cat_others.get(feat, [])
                         )
                     )
-                    binned_data = bin_labels.map(self.bin_info[feat]).astype(
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
                         outX[feat].dtype
                     )
                 outX.loc[X_normal.index, feat] = binned_data
                 outX.loc[X_missing.index, feat] = outX.loc[
                     X_missing.index, feat
                 ].replace(self.bin_info[feat])
-                # outX[feat] = outX[feat].replace(self.bin_info[feat])
+
+            if y is not None:
+                feat_woe_df = self._stat_feat(
+                    bins_categrories, y_normal, X_missing, y_missing
+                )
+                feat_woe_df["bin_strategy"] = self._bin_strategy[feat]
+                feat_woe_df["feat_type"] = self._feat_types[feat]
+                woe_info.append(feat_woe_df)
+
+        if y is not None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                self.woe_df = pd.concat(woe_info)
+            # Order the woe df with IV value
+            ordered_ft = (
+                self.woe_df["IV"]["feature"]
+                .droplevel(1)
+                .reset_index()
+                .drop_duplicates()
+                .sort_values("feature", ascending=False)["feature_name"]
+                .tolist()
+            )
+            self.woe_df = self.woe_df.reindex(ordered_ft, level=0)
 
         if self.keep_dtypes:
             outX = outX.astype(original_dtypes)
@@ -462,50 +499,5 @@ class Encoder(BaseEstimator, TransformerMixin):
             outX = outX.astype("float64")
         return outX
 
-    def get_woe_df(self, X, y):
-        """
-        Generate WOE DataFrame for the given X and y.
-        """
-        cprint("[INFO] Generating WOE DataFrame...", "white")
-        idx = 0
-        woe_info = []
-        for feat in X.columns:
-            idx += 1
-            cprint(f"[INFO] {idx}/{X.shape[1]} Process {feat}", "white")
-            X_missing, X_normal, y_missing, y_normal = self._split_dataset(X[feat], y)
-            X.loc[X_missing.index, feat] = X_missing
-            if X_normal.empty:
-                binned_data = pd.Series([], name=feat)
-            elif self._feat_types.get(feat) == "numerical":
-                binned_data = pd.cut(
-                    X_normal, self._bin_array[feat], include_lowest=True
-                )
-            else:
-                binned_data = X_normal.map(
-                    lambda x: self._cat_bin_mapping(
-                        x, self._bin_array[feat], self._cat_others.get(feat, [])
-                    )
-                )
-
-            feat_woe_df = self._stat_feat(binned_data, y_normal, X_missing, y_missing)
-            feat_woe_df["bin_strategy"] = self._bin_strategy[feat]
-            feat_woe_df["feat_type"] = self._feat_types[feat]
-            woe_info.append(feat_woe_df)
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=RuntimeWarning)
-            woe_info = pd.concat(woe_info)
-        # Trying to order the woe df with IV value
-        ordered_ft = (
-            woe_info["IV"]["feature"]
-            .droplevel(1)
-            .reset_index()
-            .drop_duplicates()
-            .sort_values("feature", ascending=False)["feature_name"]
-            .tolist()
-        )
-        woe_info = woe_info.reindex(ordered_ft, level=0)
-        return woe_info
-
     def fit_transform(self, X, y=None, **kwargs):
-        return self.fit(X, y, **kwargs).transform(X, y)
+        return self.fit(X, y, **kwargs).transform(X)
