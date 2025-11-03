@@ -406,7 +406,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         """
         cutoff_count = np.ceil(self.min_bin_rate * len(X))
         cat_count = pd.Series(X).value_counts()
-        self.cat_others = cat_count[cat_count < cutoff_count].index.values
+        self.cat_others = list(cat_count[cat_count < cutoff_count].index.values)
         mask_others = pd.Series(X).isin(self.cat_others).values
 
         if np.count_nonzero(~mask_others) == 0:
