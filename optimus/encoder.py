@@ -586,7 +586,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                         float
                     )
                 else:
-                    bins_categrories = outX[feat].map(
+                    bins_categrories = X_normal.map(
                         lambda x: self._cat_bin_mapping(
                             x, self._bin_array[feat], self._cat_others.get(feat, [])
                         )
