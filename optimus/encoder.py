@@ -595,9 +595,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                         outX[feat].dtype
                     )
                 outX.loc[X_normal.index, feat] = binned_data
-                outX.loc[X_missing.index, feat] = outX.loc[
-                    X_missing.index, feat
-                ].replace(self.bin_info[feat])
+            outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(self.bin_info[feat])
 
             if y is not None:
                 feat_woe_df = self._stat_feat(
