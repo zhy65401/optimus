@@ -354,8 +354,12 @@ class Encoder(BaseEstimator, TransformerMixin):
             return "__N.A__"
         if x in cat_others:
             return "__OTHERS__"
+        # Direct match for values in bin_list (for bin_strategy=False)
+        if x in bin_list:
+            return x
+        # Split-based match for merged categories (for bin_strategy='woeMerge')
         for val in bin_list:
-            if str(x) in val.split(self._split_symbol):
+            if str(x) in str(val).split(self._split_symbol):
                 return val
         return "__N.A__"
 
@@ -426,7 +430,6 @@ class Encoder(BaseEstimator, TransformerMixin):
         # check whether y is binary
         if len(np.unique(y)) != 2:
             raise ValueError("Label should be binary!")
-        # check whether all column binning strategy are defined
         diff_cols = set(inX.columns) - set(self.spec.keys())
         if diff_cols:
             raise KeyError(
@@ -498,6 +501,9 @@ class Encoder(BaseEstimator, TransformerMixin):
                 self._bin_array[feat] = woemerge.bins
                 self._cat_others[feat] = woemerge.cat_others
             elif bin_strategy == False:
+                if self._feat_types[feat] == "numerical":
+                    X_missing = X_missing.astype(str)
+                    X_normal = X_normal.astype(str)
                 bins = pd.unique(X_normal).tolist()
                 if len(bins) > 10:
                     cprint(
@@ -574,26 +580,25 @@ class Encoder(BaseEstimator, TransformerMixin):
             X_missing, X_normal, y_missing, y_normal = self._split_dataset(
                 outX[feat], y
             )
+            if self._bin_strategy[feat] == False and self._feat_types[feat] == "numerical":
+                X_missing = X_missing.astype(str)
+                X_normal = X_normal.astype(str)
             outX.loc[X_missing.index, feat] = X_missing
             bins_categrories = pd.Series([], name=feat)
 
             if not X_normal.empty:
-                if self._feat_types[feat] == "numerical":
-                    bins_categrories = pd.cut(
-                        X_normal, self._bin_array[feat], include_lowest=True
-                    )
-                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
-                        float
-                    )
-                else:
+                if self._bin_strategy[feat] == False or self._feat_types[feat] == "categorical":
                     bins_categrories = X_normal.map(
                         lambda x: self._cat_bin_mapping(
                             x, self._bin_array[feat], self._cat_others.get(feat, [])
                         )
                     )
-                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
-                        outX[feat].dtype
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(float)
+                elif self._feat_types[feat] == "numerical":
+                    bins_categrories = pd.cut(
+                        X_normal, self._bin_array[feat], include_lowest=True
                     )
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(float)
                 outX.loc[X_normal.index, feat] = binned_data
             outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(self.bin_info[feat])
 
