@@ -580,27 +580,39 @@ class Encoder(BaseEstimator, TransformerMixin):
             X_missing, X_normal, y_missing, y_normal = self._split_dataset(
                 outX[feat], y
             )
-            if self._bin_strategy[feat] == False and self._feat_types[feat] == "numerical":
+            if (
+                self._bin_strategy[feat] == False
+                and self._feat_types[feat] == "numerical"
+            ):
                 X_missing = X_missing.astype(str)
                 X_normal = X_normal.astype(str)
             outX.loc[X_missing.index, feat] = X_missing
             bins_categrories = pd.Series([], name=feat)
 
             if not X_normal.empty:
-                if self._bin_strategy[feat] == False or self._feat_types[feat] == "categorical":
+                if (
+                    self._bin_strategy[feat] == False
+                    or self._feat_types[feat] == "categorical"
+                ):
                     bins_categrories = X_normal.map(
                         lambda x: self._cat_bin_mapping(
                             x, self._bin_array[feat], self._cat_others.get(feat, [])
                         )
                     )
-                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(float)
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
+                        float
+                    )
                 elif self._feat_types[feat] == "numerical":
                     bins_categrories = pd.cut(
                         X_normal, self._bin_array[feat], include_lowest=True
                     )
-                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(float)
+                    binned_data = bins_categrories.map(self.bin_info[feat]).astype(
+                        float
+                    )
                 outX.loc[X_normal.index, feat] = binned_data
-            outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(self.bin_info[feat])
+            outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(
+                self.bin_info[feat]
+            )
 
             if y is not None:
                 feat_woe_df = self._stat_feat(
