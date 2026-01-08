@@ -367,30 +367,39 @@ class Encoder(BaseEstimator, TransformerMixin):
         """
         Every bin should have at least either -990000 or __N.A__ bins for handle unexpected values and empty values.
         This is used in the situation that, there is no null value in training data or there is new value in the test/online data.
+        Also ensures all values in missing_values list are present in bin_info with appropriate WOE values.
         """
         for feat, bins_woe in self.bin_info.items():
+            # Calculate default missing WOE value based on normal values
+            normal_woes = [
+                v for k, v in bins_woe.items() if k not in self.missing_values
+            ]
+            if not normal_woes:
+                default_woe = np.nan
+            elif self.treat_missing == "mean":
+                default_woe = np.mean(normal_woes)
+            elif self.treat_missing == "min":
+                default_woe = np.min(normal_woes)
+            elif self.treat_missing == "max":
+                default_woe = np.max(normal_woes)
+            elif self.treat_missing == "zero":
+                default_woe = 0
+            else:
+                raise ValueError(
+                    f"Unknown treat_missing strategy `{self.treat_missing}`, expected one of (`mean`, `min`, `max`, `zero`)"
+                )
+
+            # Ensure standard missing bin exists
             if ("__N.A__" not in bins_woe) and (-990000 not in bins_woe):
-                normal_woes = [
-                    v for k, v in bins_woe.items() if k not in self.missing_values
-                ]
-                if not normal_woes:
-                    res = np.nan
-                elif self.treat_missing == "mean":
-                    res = np.mean(normal_woes)
-                elif self.treat_missing == "min":
-                    res = np.min(normal_woes)
-                elif self.treat_missing == "max":
-                    res = np.max(normal_woes)
-                elif self.treat_missing == "zero":
-                    res = 0
-                else:
-                    raise ValueError(
-                        f"Unknown treat_missing strategy `{self.treat_missing}`, expected one of (`mean`, `min`, `max`, `zero`)"
-                    )
                 at_least_bin = (
                     -990000 if self._feat_types[feat] == "numerical" else "__N.A__"
                 )
-                self.bin_info[feat][at_least_bin] = res
+                self.bin_info[feat][at_least_bin] = default_woe
+
+            # Ensure all user-defined missing values are in bin_info
+            for missing_val in self.missing_values:
+                if missing_val not in bins_woe:
+                    self.bin_info[feat][missing_val] = default_woe
 
     def fit(
         self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray], **kwargs: Any
