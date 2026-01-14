@@ -3,14 +3,17 @@
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
-import os
+import io
 from typing import Any, Dict, List, Optional, Union
 
+import matplotlib.pyplot as plt
 import pandas as pd
+from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from pandas.api.types import is_numeric_dtype
 
+from .calibrator import Calibration
 from .metrics import Metrics
 
 
@@ -50,16 +53,14 @@ class Reporter:
         >>> reporter.generate_report(performance_data)
     """
 
-    def __init__(self, report_path: Optional[str] = None) -> None:
+    def __init__(self, report_file_name: Optional[str] = None) -> None:
         """
         Initialize the Reporter with optional custom report directory.
 
         Args:
-            report_path: Directory path where generated reports will be saved.
-                        If None, reports will be saved in the current working directory.
-                        The directory will be created if it doesn't exist.
+            report_file_name: File name for the generated report. If None, a default name will be used.
         """
-        self.report_path = report_path
+        self.report_file_name = report_file_name or "model_report.xlsx"
 
     @classmethod
     def _set_col_format(
@@ -283,7 +284,24 @@ class Reporter:
         Args:
             worksheet: The openpyxl worksheet containing calibration scorecard data.
         """
-        perc_cols = ["E", "G", "H", "J", "K", "L", "M", "N", "O", "P"]
+        perc_cols = [
+            "D",
+            "E",
+            "G",
+            "H",
+            "I",
+            "J",
+            "L",
+            "M",
+            "N",
+            "O",
+            "P",
+            "Q",
+            "R",
+            "S",
+            "T",
+            "U",
+        ]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w15 = [
             "A",
@@ -302,6 +320,11 @@ class Reporter:
             "N",
             "O",
             "P",
+            "Q",
+            "R",
+            "S",
+            "T",
+            "U",
         ]
         Reporter._set_col_width(worksheet, w15, 15)
 
@@ -331,11 +354,48 @@ class Reporter:
             worksheet: The openpyxl worksheet containing score PSI analysis.
         """
         perc_cols = ["B"]
-        Reporter._set_col_format(worksheet, perc_cols, "0.000%")
+        Reporter._set_col_format(worksheet, perc_cols, "0.00")
         w15 = ["B"]
         Reporter._set_col_width(worksheet, w15, 15)
         w20 = ["A"]
         Reporter._set_col_width(worksheet, w20, 20)
+
+    def _insert_figure_to_excel(
+        self,
+        writer: pd.ExcelWriter,
+        fig: plt.Figure,
+        sheet_name: str,
+        anchor: str = "A3",
+        title: str = "",
+        dpi: int = 50,
+    ) -> None:
+        """
+        Insert a matplotlib figure into an Excel worksheet.
+
+        Creates a new worksheet and embeds the figure as a PNG image.
+
+        Args:
+            writer: Excel writer object for output file generation.
+            fig: Matplotlib Figure object to insert.
+            sheet_name: Name for the new worksheet.
+            anchor: Cell anchor position for the image (default: 'A3').
+            title: Optional title to display in the sheet header.
+        """
+        # Create a placeholder DataFrame for the sheet
+        header_text = title if title else sheet_name
+        pd.DataFrame({sheet_name: [header_text]}).to_excel(
+            writer, sheet_name=sheet_name, index=False
+        )
+
+        worksheet = writer.sheets[sheet_name]
+
+        # Save figure to byte buffer and add to worksheet
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+        buf.seek(0)
+        img = XLImage(buf)
+        img.anchor = anchor
+        worksheet.add_image(img)
 
     def _stat_feat(
         self,
@@ -532,6 +592,36 @@ class Reporter:
             }
         )
 
+    def _generate_sample_overview_basic(
+        self, writer: pd.ExcelWriter, sample_set: Dict[str, Dict[str, Any]]
+    ) -> None:
+        """
+        Generate basic sample overview (no score/performance required).
+
+        Creates a simple worksheet with sample sizes and bad rates.
+        Used when model scores are not yet available (e.g., preprocessor stage).
+
+        Args:
+            writer: Excel writer object for output file generation.
+            sample_set: Dictionary containing sample data with 'X' and 'y' keys.
+        """
+        sample_stats = []
+        for sample_type, sample in sample_set.items():
+            y = sample["y"]
+            sample_stats.append(
+                {
+                    "sample_type": sample_type,
+                    "# Sample": len(y),
+                    "% Bad": y.mean() if hasattr(y, "mean") else sum(y) / len(y),
+                }
+            )
+        df_basic = pd.DataFrame(sample_stats).set_index("sample_type")
+        df_basic["% Sample"] = df_basic["# Sample"] / df_basic["# Sample"].sum()
+        df_basic = df_basic[["# Sample", "% Sample", "% Bad"]]
+        df_basic.sort_index(ascending=False).to_excel(
+            writer, sheet_name="Sample Overview", freeze_panes=(1, 1)
+        )
+
     def generate_sample_overview_report(
         self, writer: pd.ExcelWriter, sample_set: Dict[str, Dict[str, Any]], label: str
     ) -> None:
@@ -568,12 +658,8 @@ class Reporter:
             sample_size=("sample_type", "size"),
             sample_size_pct=("sample_type", lambda x: x.size / df_extra.shape[0]),
             positive_rate=(label, "mean"),
-            PSI=(
-                "score",
-                lambda x: Metrics.get_psi(x, sample_set["train"]["e"]["score"]),
-            ),
         )
-        df_basic_summary.columns = ["# Sample", "% Sample", "% Bad", "% PSI"]
+        df_basic_summary.columns = ["# Sample", "% Sample", "% Bad"]
         df_basic_summary.sort_index(ascending=False).to_excel(
             writer, sheet_name="Sample Overview - Statistics", freeze_panes=(1, 1)
         )
@@ -637,7 +723,7 @@ class Reporter:
         self._format_woe_df(writer.sheets[f"{prefix} - Feature Binning Report"])
 
     def generate_feature_selection_report(
-        self, writer: pd.ExcelWriter, selectors: Any
+        self, writer: pd.ExcelWriter, fitted_steps: Any
     ) -> None:
         """
         Generate comprehensive feature selection pipeline report.
@@ -648,9 +734,10 @@ class Reporter:
 
         Args:
             writer: Excel writer object for output file generation.
-            selectors: Feature selection pipeline object containing:
-                - steps: List of (name, selector) tuples for each selection method
-                - Each selector has selected_features and detail attributes
+            fitted_steps: Fitted steps from Preprocess. Can be either:
+                - Dict[str, transformer]: From preprocessor.named_steps
+                - List[Tuple[str, transformer]]: From preprocessor._fitted_steps
+                Each selector should have 'selected_features' and 'detail' attributes.
 
         Selection Methods Supported:
         - **Correlation (Corr)**: Uses selector.detail['after'] for results
@@ -659,28 +746,93 @@ class Reporter:
         Example:
             >>> # Generate feature selection report
             >>> with pd.ExcelWriter('feature_selection.xlsx') as writer:
-            ...     reporter.generate_feature_selection_report(writer, selection_pipeline)
+            ...     reporter.generate_feature_selection_report(writer, preprocessor.named_steps)
         """
-        original_cols = pd.DataFrame(
-            selectors["Original"].selected_features, columns=["feature"]
-        ).set_index("feature")
-        for name, selector in selectors.steps:
-            original_cols.loc[selector.selected_features, name] = 1
-            original_cols[name] = original_cols[name].fillna(0)
-        original_cols.sort_values(
-            [i[0] for i in selectors.steps][::-1], ascending=False
-        ).to_excel(writer, sheet_name="Feature Selection - Overview")
+        # Normalize input to list of tuples
+        if isinstance(fitted_steps, dict):
+            steps_list = list(fitted_steps.items())
+        else:
+            steps_list = list(fitted_steps)
+
+        # Filter to only selector steps (by checking module and attribute)
+        selector_steps = [
+            (name, step)
+            for name, step in steps_list
+            if "feature_selection" in getattr(step.__class__, "__module__", "")
+            and hasattr(step, "selected_features")
+        ]
+
+        if not selector_steps:
+            return
+
+        # Find "Original" step for baseline features
+        original_features = None
+        for name, selector in selector_steps:
+            if name == "Original":
+                original_features = selector.selected_features
+                break
+
+        # Fallback: use first selector's features as baseline
+        if original_features is None:
+            original_features = selector_steps[0][1].selected_features
+
+        # Handle empty features case
+        if original_features is None or len(original_features) == 0:
+            # Create an empty overview sheet with a message
+            pd.DataFrame(
+                {"Message": ["No features available for selection overview"]}
+            ).to_excel(writer, sheet_name="Feature Selection - Overview", index=False)
+            return
+
+        # Build overview DataFrame
+        original_cols = pd.DataFrame(original_features, columns=["feature"]).set_index(
+            "feature"
+        )
+
+        for name, selector in selector_steps:
+            if name == "Original":
+                continue
+            original_cols[name] = 0
+            if (
+                selector.selected_features is not None
+                and len(selector.selected_features) > 0
+            ):
+                # Mark selected features as 1
+                for feat in selector.selected_features:
+                    if feat in original_cols.index:
+                        original_cols.loc[feat, name] = 1
+
+        # Sort by selection order (last selector first)
+        sort_columns = [name for name, _ in selector_steps if name != "Original"][::-1]
+        if sort_columns:
+            original_cols.sort_values(sort_columns, ascending=False).to_excel(
+                writer, sheet_name="Feature Selection - Overview"
+            )
+        else:
+            original_cols.to_excel(writer, sheet_name="Feature Selection - Overview")
+
         self._format_feature_selection_overview_df(
             writer.sheets["Feature Selection - Overview"]
         )
-        for name, selector in selectors.steps:
-            if name == "Corr":
-                selector.detail["after"].to_excel(
-                    writer,
-                    sheet_name=f"Feature Selection - {name}",
-                    freeze_panes=(1, 1),
-                )
-            else:
+
+        # Write detail sheets for each selector
+        for name, selector in selector_steps:
+            if name == "Original":
+                continue
+            if not hasattr(selector, "detail") or selector.detail is None:
+                continue
+
+            if name == "Corr" and isinstance(selector.detail, dict):
+                detail_df = selector.detail.get("after")
+                if detail_df is not None and not detail_df.empty:
+                    detail_df.to_excel(
+                        writer,
+                        sheet_name=f"Feature Selection - {name}",
+                        freeze_panes=(1, 1),
+                    )
+            elif (
+                isinstance(selector.detail, pd.DataFrame) and not selector.detail.empty
+            ):
                 selector.detail.to_excel(
                     writer,
                     sheet_name=f"Feature Selection - {name}",
@@ -690,7 +842,9 @@ class Reporter:
                     writer.sheets[f"Feature Selection - {name}"]
                 )
 
-    def generate_benchmark_report(self, writer: pd.ExcelWriter, benchmark: Any) -> None:
+    def generate_benchmark_report(
+        self, writer: pd.ExcelWriter, benchmark_detail: pd.DataFrame
+    ) -> None:
         """
         Generate benchmark model analysis report.
 
@@ -699,15 +853,16 @@ class Reporter:
 
         Args:
             writer: Excel writer object for output file generation.
-            benchmark: Benchmark model object containing:
-                - model_detail: DataFrame with benchmark model parameters and metrics
+            benchmark_detail: Benchmark model details DataFrame.
 
         Example:
             >>> # Generate benchmark report
             >>> with pd.ExcelWriter('benchmark_analysis.xlsx') as writer:
-            ...     reporter.generate_benchmark_report(writer, benchmark_model)
+            ...     reporter.generate_benchmark_report(writer, benchmark_detail)
         """
-        benchmark.model_detail.to_excel(
+        if benchmark_detail is None:
+            return
+        benchmark_detail.to_excel(
             writer, sheet_name="Model - Benchmark Details", freeze_panes=(1, 1)
         )
         self._format_benchmark_df(writer.sheets["Model - Benchmark Details"])
@@ -738,10 +893,69 @@ class Reporter:
             )
             self._format_tuning_df(writer.sheets["Model - Tuning Report"])
 
+    def generate_feature_importance_report(
+        self,
+        writer: pd.ExcelWriter,
+        feature_importance: pd.DataFrame,
+    ) -> None:
+        """
+        Generate feature importance report with visualization.
+
+        Creates a detailed report of feature importance from the trained model,
+        including a bar chart visualization and sorted importance values.
+
+        Args:
+            writer: Excel writer object for output file generation.
+            feature_importance: DataFrame with 'feature' and 'importance' columns.
+
+        Example:
+            >>> # Generate feature importance report
+            >>> with pd.ExcelWriter('report.xlsx') as writer:
+            ...     reporter.generate_feature_importance_report(writer, feat_imp_df)
+        """
+        if feature_importance is None or len(feature_importance) == 0:
+            return
+
+        # Sort by importance descending
+        df_imp = feature_importance.sort_values(
+            "importance", ascending=False
+        ).reset_index(drop=True)
+        df_imp.to_excel(
+            writer,
+            sheet_name="Model - Feature Importance",
+            freeze_panes=(1, 1),
+            index=False,
+        )
+
+        # Format the worksheet
+        worksheet = writer.sheets["Model - Feature Importance"]
+        self._set_col_width(worksheet, ["A"], 40)
+        self._set_col_width(worksheet, ["B"], 15)
+        self._set_col_format(worksheet, ["B"], "0.0000")
+
+        # Create bar chart
+        fig, ax = plt.subplots(figsize=(10, max(6, len(df_imp) * 0.3)))
+        top_n = min(30, len(df_imp))  # Show top 30 features in chart
+        df_plot = df_imp.head(top_n).iloc[::-1]  # Reverse for horizontal bar
+        ax.barh(df_plot["feature"], df_plot["importance"], color="steelblue")
+        ax.set_xlabel("Importance")
+        ax.set_ylabel("Feature")
+        ax.set_title(f"Top {top_n} Feature Importance")
+        plt.tight_layout()
+
+        # Insert chart into worksheet
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format="png", dpi=100, bbox_inches="tight")
+        plt.close(fig)
+        img_buffer.seek(0)
+        img = XLImage(img_buffer)
+        img.anchor = "D2"
+        worksheet.add_image(img)
+
     def generate_calibration_report(
         self,
         writer: pd.ExcelWriter,
-        calibrate_detail: pd.DataFrame,
+        calibrator: Calibration,
         scorecard: Dict[str, pd.DataFrame],
         scoredist: Dict[str, pd.DataFrame],
     ) -> None:
@@ -749,35 +963,46 @@ class Reporter:
         Generate comprehensive model calibration analysis report.
 
         Creates detailed calibration analysis including regression parameters,
-        scorecards for different sample types, score distributions, and PSI tracking.
+        scorecards for different sample types, score distributions, PSI tracking,
+        and optional calibration plot.
 
         Report Components:
         1. **Calibration - Regression**: Calibration regression parameters and fit metrics
         2. **Calibration - [Sample] Score Card**: Score bands with population and risk metrics
         3. **Calibration - Score Distribution**: Score distribution across samples
         4. **Calibration - Score PSI**: Population Stability Index for score drift monitoring
+        5. **Calibration - Plot**: Before/after calibration curves (if available)
 
         Args:
             writer: Excel writer object for output file generation.
-            calibrate_detail: DataFrame containing calibration regression details and parameters.
+            calibrator: Fitted Calibration instance containing calibrate_detail and
+                       optionally calibrate_plot.
             scorecard: Dictionary mapping sample names to scorecard DataFrames:
                       {'train': scorecard_df, 'test': scorecard_df, ...}
             scoredist: Dictionary containing distribution analysis:
                       {'Distribution': dist_df, 'PSI': psi_df}
 
         Example:
-            >>> # Generate calibration report
+            >>> # Generate calibration report with calibrator (probability mode)
+            >>> from optimus.calibrator import Calibration
+            >>> calibrator = Calibration()  # probability mode (no mapping_base)
+            >>> calibrator.fit(y_prob_train, y_train)
+            >>>
             >>> scorecard_data = {'train': train_scorecard, 'test': test_scorecard}
             >>> dist_data = {'Distribution': score_dist, 'PSI': psi_analysis}
             >>> with pd.ExcelWriter('calibration_report.xlsx') as writer:
             ...     reporter.generate_calibration_report(
-            ...         writer, calib_details, scorecard_data, dist_data
+            ...         writer, calibrator, scorecard_data, dist_data
             ...     )
         """
-        calibrate_detail.to_excel(
-            writer, sheet_name="Calibration - Regression", freeze_panes=(1, 1)
-        )
-        self._format_calibration_reg_df(writer.sheets["Calibration - Regression"])
+        if calibrator is None:
+            return
+
+        if calibrator.calibrate_detail is not None:
+            calibrator.calibrate_detail.to_excel(
+                writer, sheet_name="Calibration - Regression", freeze_panes=(1, 1)
+            )
+            self._format_calibration_reg_df(writer.sheets["Calibration - Regression"])
 
         for name, df_scorecard in scorecard.items():
             df_scorecard.to_excel(
@@ -804,100 +1029,141 @@ class Reporter:
         )
         self._format_calibration_score_psi_df(writer.sheets[f"Calibration - Score PSI"])
 
+        # Insert calibration plot if calibrator has a plot
+        if calibrator.calibrate_plot is not None:
+            # Insert calibration plot with smaller dpi for more compact image
+            self._insert_figure_to_excel(
+                writer=writer,
+                fig=calibrator.calibrate_plot,
+                sheet_name="Calibration - Plot",
+                title="Calibration Curve (Before vs After)",
+                dpi=100,
+            )
+
     def generate_report(self, performance: Dict[str, Any], **kwargs) -> None:
         """
         Generate comprehensive model performance report with all analysis components.
 
         Creates a complete Excel report containing all available analysis sections
-        based on the provided performance data. The report includes sample overview,
-        feature analysis, feature selection, model details, and calibration analysis.
+        based on the provided performance data. Use eda_only=True for lightweight
+        EDA-only reports at preprocessor stage (no model scores required).
 
         Report Sections Generated (based on available data):
-        - **Sample Overview**: Always generated - statistics and performance by sample
-        - **Feature Analysis**: Generated if 'woe_df' provided - EDA for each sample type
-        - **Feature Selection**: Generated if 'feature_selection' provided - selection pipeline results
-        - **Benchmark Model**: Generated if 'benchmark' provided - benchmark model details
-        - **Model Tuning**: Generated if 'tune_results' provided - hyperparameter optimization
-        - **Calibration Analysis**: Generated if calibration data provided - score calibration and monitoring
+        - **Sample Overview**: Always generated
+            - Full version (with PSI/Performance) if eda_only=False
+            - Basic version (sizes/bad rates only) if eda_only=True
+        - **Feature Analysis**: Generated if 'woe_df' provided
+        - **Feature Selection**: Generated if 'feature_selection' provided
+        - **Benchmark Model**: Generated if 'benchmark' provided (eda_only=False)
+        - **Model Tuning**: Generated if 'tune_results' provided (eda_only=False)
+        - **Calibration Analysis**: Generated if calibration data provided (eda_only=False)
 
         Args:
-            performance: Dictionary containing model performance data with required keys:
-                - **model_id** (str): Unique identifier for the model report
+            performance: Dictionary containing model performance data:
+                Required:
                 - **sample_set** (Dict): Sample data with 'train', 'test', etc. keys
-                - **label** (str): Target variable column name
+                    Each sample must have 'X' and 'y'. Optionally 'e' for extended info.
 
-                Optional keys for additional reports:
+                Required for eda_only=False:
+                - **label** (str): Target column name in 'e' DataFrame.
+
+                Optional:
                 - **woe_df** (Dict): WOE analysis by sample type
-                - **missing_values** (List): Values to treat as missing
+                - **missing_values** (List): Values to treat as missing (default: [])
                 - **feature_selection**: Feature selection pipeline results
                 - **benchmark**: Benchmark model analysis
                 - **tune_results** (DataFrame): Hyperparameter tuning results
                 - **calibrate_detail** (DataFrame): Calibration regression details
                 - **scorecard** (Dict): Scorecard analysis by sample
                 - **scoredist** (Dict): Score distribution and PSI analysis
-            **kwargs: Additional keyword arguments (currently unused).
+            **kwargs: Additional keyword arguments, including eda_only (bool, False by default).
 
         Output:
-            Creates Excel file: '{report_path}/model_report_{model_id}.xlsx'
-
-        Raises:
-            KeyError: If required keys are missing from performance dictionary.
-            FileNotFoundError: If report_path doesn't exist and cannot be created.
+            Creates Excel file at self.report_file_name
 
         Example:
-            >>> # Generate complete model report
-            >>> performance_data = {
-            ...     'model_id': 'credit_risk_v2_0',
-            ...     'sample_set': {'train': train_data, 'test': test_data, 'oot': oot_data},
-            ...     'label': 'default_30dpd',
+            >>> # EDA-only report (preprocessor stage)
+            >>> reporter.generate_report({
+            ...     'sample_set': {'train': {'X': X_train, 'y': y_train},
+            ...                    'test': {'X': X_test, 'y': y_test}},
             ...     'woe_df': {'train': train_woe, 'test': test_woe},
-            ...     'missing_values': [None, np.nan, -999],
-            ...     'feature_selection': selection_pipeline,
+            ...     'missing_values': [-999999],
+            ... }, eda_only=True)
+
+            >>> # Full report with model scores
+            >>> reporter.generate_report({
+            ...     'sample_set': {'train': {'X': X_train, 'y': y_train, 'e': train_ext},
+            ...                    'test': {'X': X_test, 'y': y_test, 'e': test_ext}},
+            ...     'label': 'default_flag',
+            ...     'woe_df': {'train': train_woe, 'test': test_woe},
+            ...     'missing_values': [-999999],
+            ...     'feature_selection': preprocessor.named_steps,
             ...     'benchmark': benchmark_results,
-            ...     'tune_results': optimization_results,
-            ...     'calibrate_detail': calibration_params,
-            ...     'scorecard': {'train': train_scorecard, 'test': test_scorecard},
-            ...     'scoredist': {'Distribution': dist_analysis, 'PSI': psi_tracking}
-            ... }
-            >>> reporter = Reporter(report_path='/path/to/reports')
-            >>> reporter.generate_report(performance_data)
+            ...     'calibrate_detail': calib_df,
+            ...     'scorecard': scorecard_dict,
+            ...     'scoredist': scoredist_dict,
+            ... })
         """
         writer = pd.ExcelWriter(
-            os.path.join(
-                self.report_path, f"model_report_{performance['model_id']}.xlsx"
-            ),
+            self.report_file_name,
             engine="openpyxl",
         )
-        self.generate_sample_overview_report(
-            writer, performance["sample_set"], performance["label"]
-        )
+
+        sample_set = performance["sample_set"]
+
+        # Sample Overview
+        if kwargs.get("eda_only", False):
+            self._generate_sample_overview_basic(writer, sample_set)
+        else:
+            self.generate_sample_overview_report(
+                writer, sample_set, performance["label"]
+            )
+
+        # Feature EDA
         if "woe_df" in performance:
+            missing_values = performance.get("missing_values", [])
             for sample_type, woe_df in performance["woe_df"].items():
-                self.generate_single_feature_eda_report(
-                    writer,
-                    performance["sample_set"][sample_type]["X"],
-                    performance["sample_set"][sample_type]["y"],
-                    woe_df,
-                    performance["missing_values"],
-                    sample_type,
-                )
+                if sample_type in sample_set:
+                    self.generate_single_feature_eda_report(
+                        writer,
+                        sample_set[sample_type]["X"],
+                        sample_set[sample_type]["y"],
+                        woe_df,
+                        missing_values,
+                        sample_type,
+                    )
+
+        # Feature Selection
         if "feature_selection" in performance:
             self.generate_feature_selection_report(
                 writer, performance["feature_selection"]
             )
-        if "benchmark" in performance:
-            self.generate_benchmark_report(writer, performance["benchmark"])
+
+        # Benchmark
+        if "benchmark_detail" in performance:
+            self.generate_benchmark_report(writer, performance["benchmark_detail"])
+
+        # Model Tuning
         if "tune_results" in performance:
             self.generate_model_tuning_report(writer, performance["tune_results"])
+
+        # Feature Importance
+        if "feature_importance" in performance:
+            self.generate_feature_importance_report(
+                writer, performance["feature_importance"]
+            )
+
         if (
-            "calibrate_detail" in performance
+            "calibrator" in performance
             and "scorecard" in performance
             and "scoredist" in performance
         ):
             self.generate_calibration_report(
                 writer,
-                performance["calibrate_detail"],
+                performance["calibrator"],
                 performance["scorecard"],
                 performance["scoredist"],
             )
+
         writer.close()
+        print(f"[INFO] Report saved to: {self.report_file_name}")

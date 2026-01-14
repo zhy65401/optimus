@@ -10,69 +10,59 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.base import TransformerMixin
+from sklearn.calibration import CalibrationDisplay
 
 
 class Calibration(TransformerMixin):
     """
     A comprehensive score calibration system for credit scoring and risk modeling.
 
-    This class provides multiple score calibration strategies to transform predicted
-    probabilities into interpretable credit scores or risk ratings.
+    This class provides two calibration strategies to transform predicted
+    probabilities into interpretable credit scores or calibrated probabilities.
 
-    Score Types:
-    -----------
-    'mega_score':
-         Standard credit score calibration (300-1000 scale)
-         850 corresponds to ~0.1% bad rate, 500 to ~12.8% bad rate
-         Commonly used for consumer credit scoring
+    Calibration Modes:
+    -----------------
+    Score Mapping Mode (mapping_base provided):
+        Custom score scale with user-defined mapping.
+        Transforms probabilities into credit scores based on score-to-probability mapping.
+        Requires mapping_base, score_cap, and score_floor parameters.
+        Useful for business requirements with specific score ranges.
 
-    'sub_score':
-         Sub-score calibration for component scores (0-100 scale)
-         95 corresponds to ~0.1% bad rate, 10 to ~12.8% bad rate
-         Useful for decomposed risk assessment
-
-    'self-defining':
-         Custom score scale with user-defined mapping
-         Requires mapping_base, score_cap, and score_floor parameters
-         Flexible for specific business requirements
-
-    'probability':
-         Probability calibration only (0-1 scale)
-         Ensures predicted probabilities match observed frequencies
-         Useful when interpretable probabilities are preferred over scores
+    Probability Mode (mapping_base is None):
+        Probability calibration only (0-1 scale).
+        Ensures predicted probabilities match observed frequencies.
+        Output is directly calibrated probabilities without score mapping.
+        Useful when interpretable probabilities are preferred over scores.
 
     Attributes:
-        n_bins: Number of bins for calibration binning
-        n_degree: Polynomial degree for probability calibration
-        score_type: Type of score calibration to apply
-        mapping_base: Custom mapping dictionary for 'self-defining' type
-        score_cap: Maximum score value
-        score_floor: Minimum score value
-        calibrate_detail: Detailed calibration results and diagnostics
+        n_bins: Number of bins for calibration binning.
+        n_degree: Polynomial degree for probability calibration.
+        mapping_base: Custom mapping dictionary {score: probability}.
+        score_cap: Maximum score value (used with mapping_base).
+        score_floor: Minimum score value (used with mapping_base).
+        calibrate_detail: Detailed calibration results and diagnostics.
+        calibrate_plot: Calibration plot figure (generated in probability mode).
 
     Examples:
-        >>> # Standard credit score calibration
-        >>> calibrator = Calibration(score_type='mega_score')
+        >>> # Probability calibration (default)
+        >>> calibrator = Calibration()
         >>> calibrator.fit(y_prob, y_true)
-        >>> scores = calibrator.transform(y_prob_test)
+        >>> calibrated_probs = calibrator.transform(y_prob_test)
 
         >>> # Custom score mapping
         >>> calibrator = Calibration(
-        ...     score_type='self-defining',
         ...     mapping_base={600: 0.05, 700: 0.02, 800: 0.01},
         ...     score_cap=850,
         ...     score_floor=300
         ... )
-
-        >>> # Probability calibration only
-        >>> calibrator = Calibration(score_type='probability')
-        >>> calibrated_probs = calibrator.transform(y_prob)
+        >>> calibrator.fit(y_prob, y_true)
+        >>> scores = calibrator.transform(y_prob_test)
 
     Notes:
     -----
     Always validate calibration quality using:
     - calibrate_detail: Check calibration statistics and reliability
-    - get_calibrate_plot(): Visualize calibration curve
+    - get_calibrate_plot(): Visualize calibration curve (always generated)
     - compare_calibrate_result(): Analyze score distribution and performance
     """
 
@@ -80,7 +70,6 @@ class Calibration(TransformerMixin):
         self,
         n_bins: int = 25,
         n_degree: int = 1,
-        score_type: str = "mega_score",
         mapping_base: Optional[Dict[int, float]] = None,
         score_cap: Optional[float] = None,
         score_floor: Optional[float] = None,
@@ -89,25 +78,20 @@ class Calibration(TransformerMixin):
         Initialize the Calibration transformer.
 
         Args:
-            n_bins: Number of bins for calibration analysis and probability binning
-            n_degree: Polynomial degree for probability calibration curve fitting
-            score_type: Type of score calibration:
-                - 'mega_score': Standard credit score (300-1000)
-                - 'sub_score': Component score (0-100)
-                - 'self-defining': Custom score with user mapping
-                - 'probability': Calibrated probabilities only
-            mapping_base: Custom score-to-probability mapping for 'self-defining' type.
-                Format: {score: probability}, e.g., {600: 0.05, 700: 0.02}
-            score_cap: Maximum score value for 'self-defining' type
-            score_floor: Minimum score value for 'self-defining' type
+            n_bins: Number of bins for calibration analysis and probability binning.
+            n_degree: Polynomial degree for probability calibration curve fitting.
+            mapping_base: Custom score-to-probability mapping. If provided, transforms
+                probabilities to credit scores. If None (default), outputs calibrated
+                probabilities directly. Format: {score: probability}, e.g., {600: 0.05}.
+            score_cap: Maximum score value (required when mapping_base is provided).
+            score_floor: Minimum score value (required when mapping_base is provided).
 
         Examples:
-            >>> # Standard usage
+            >>> # Probability calibration (default)
             >>> calibrator = Calibration()
 
             >>> # Custom score mapping
             >>> calibrator = Calibration(
-            ...     score_type='self-defining',
             ...     mapping_base={500: 0.1, 600: 0.05, 700: 0.02},
             ...     score_cap=800,
             ...     score_floor=400
@@ -116,15 +100,27 @@ class Calibration(TransformerMixin):
         self.mapping_base = mapping_base
         self.score_cap = score_cap
         self.score_floor = score_floor
-        self.score_type = score_type
         self.n_bins = n_bins
         self.n_degree = n_degree
+        self._use_score_mapping = mapping_base is not None
+
+        if self._use_score_mapping:
+            if score_cap is None or score_floor is None:
+                raise ValueError(
+                    "score_cap and score_floor are required when mapping_base is provided."
+                )
+        else:
+            self.score_floor = 0
+            self.score_cap = 1
 
         # Results and fitted parameters
         self.calibrate_detail: Optional[pd.DataFrame] = None
         self.calibrate_coef: Optional[np.ndarray] = None
         self.mapping_intercept: Optional[float] = None
         self.mapping_slope: Optional[float] = None
+
+        # Calibration plot figure (generated during fit)
+        self.calibrate_plot: Optional[plt.Figure] = None
 
     def fit(
         self,
@@ -145,52 +141,23 @@ class Calibration(TransformerMixin):
             self: Fitted calibration instance
 
         Examples:
-            >>> calibrator = Calibration(score_type='mega_score')
+            >>> calibrator = Calibration()
             >>> calibrator.fit(y_prob_train, y_true_train)
             >>> print("Calibration fitted successfully")
         """
-        """
-        Fit the calibration model. The purpose is to calibrate the output from a classifier to a score, so that each score bin will have a similar bad rate.
-        The idea is to build a linear regression between the ln(odds(y_hat)) and the real bad rate in each bin in the training set.
-        The transformation process will compute the estimated bad rate with a given ln(odds(y_hat)) and hence map to a score with self-defined mapping base.
-
-        Arguments:
-        df_prob : pd.DataFrame
-            The predicted output from the classifier.
-        df_label : pd.DataFrame
-            The true labels of the data.
-        """
         if self.mapping_base is not None:
-            self.score_type = "self-defining"
-            logging.warning(
-                "self-defining score type, input mapping_base, score_cap, and score_floor"
-            )
-            self.mapping_base, self.score_cap, self.score_floor = (
-                self.mapping_base,
-                self.score_cap,
-                self.score_floor,
+            # Score mapping mode: use provided mapping_base
+            self._use_score_mapping = True
+            logging.info(
+                "Score mapping mode: using provided mapping_base, score_cap, and score_floor"
             )
             self.mapping_slope, self.mapping_intercept = self.__set_mapping_base(
                 self.mapping_base
             )
-
-        elif self.score_type == "probability":
-            logging.warning("probability score type, only probability calibration")
-
-        elif self.score_type in ["mega_score", "sub_score"]:
-            (
-                self.mapping_base,
-                self.score_cap,
-                self.score_floor,
-            ) = self.__set_default_score_base(self.score_type)
-            self.mapping_slope, self.mapping_intercept = self.__set_mapping_base(
-                self.mapping_base
-            )
-
         else:
-            raise Exception(
-                "unknown score type, expect mega_score, sub_score, probability, and self-defining"
-            )
+            # Probability mode: output calibrated probabilities directly
+            self._use_score_mapping = False
+            logging.info("Probability mode: output calibrated probabilities directly")
 
         lst_prob = self.__check_type(df_prob)
         lst_label = self.__check_type(df_label)
@@ -229,15 +196,40 @@ class Calibration(TransformerMixin):
         self.calibrate_coef = np.polyfit(
             df_cal["lnodds_prob_mean_x"], df_cal["lnodds_bad_rate_y"], self.n_degree
         )
+
+        # Generate and store calibration plot (always generate regardless of mode)
+        # Use probability outputs for the plot even in score mapping mode
+        lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
+        lst_lnodds_cal_prob = [
+            np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
+        ]
+        y_prob_after = np.array([self.lnodds2prob(x) for x in lst_lnodds_cal_prob])
+        self.calibrate_plot = self._generate_calibrate_plot(
+            y_true=np.array(lst_label),
+            y_prob_before=np.array(lst_prob),
+            y_prob_after=y_prob_after,
+        )
+
         return self
 
     def transform(self, df_prob):
         """
-        Transform the predicted output from the classifier to a score.
+        Transform predicted probabilities to calibrated scores or probabilities.
 
-        Arguments:
-        df_prob : pd.DataFrame
-            The predicted output from the classifier.
+        Applies the fitted calibration model to convert raw probabilities
+        into either calibrated probabilities or mapped credit scores.
+
+        Args:
+            df_prob: Predicted probabilities from the classifier.
+                Can be pd.Series, np.ndarray, list, or pd.DataFrame.
+
+        Returns:
+            np.ndarray: Calibrated output:
+                - If mapping_base provided: Credit scores (bounded by score_cap/score_floor)
+                - If mapping_base is None: Calibrated probabilities (0-1 scale)
+
+        Example:
+            >>> scores = calibrator.transform(y_prob_test)
         """
         lst_prob = self.__check_type(df_prob)
         lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
@@ -245,11 +237,8 @@ class Calibration(TransformerMixin):
             np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
         ]
 
-        if self.score_type == "probability":
-            lst_cal_prob = [self.lnodds2prob(x) for x in lst_lnodds_cal_prob]
-            return np.array(lst_cal_prob)
-
-        else:
+        if self._use_score_mapping:
+            # Score mapping mode: convert to credit scores
             lst_score = [
                 self.mapping_intercept + self.mapping_slope * x
                 for x in lst_lnodds_cal_prob
@@ -257,47 +246,44 @@ class Calibration(TransformerMixin):
             lst_score = [max(x, self.score_floor) for x in lst_score]
             lst_score = [min(x, self.score_cap) for x in lst_score]
             return np.array(lst_score)
+        else:
+            # Probability mode: return calibrated probabilities
+            lst_cal_prob = [self.lnodds2prob(x) for x in lst_lnodds_cal_prob]
+            return np.array(lst_cal_prob)
 
     def compare_calibrate_result(self, df_score, df_label, bins=None):
         """
-        Compare the calibration result with the original score.
+        Compare calibration results by generating a detailed scorecard analysis.
 
-        Arguments:
-        df_score : pd.DataFrame
-            The predicted output from the classifier.
-        df_label : pd.DataFrame
-            The true labels of the data.
-        bins : list
-            The bins to be used for the calibration result.
+        Analyzes score distribution, bad rates, lift metrics, and KS/IV statistics
+        across score bins to evaluate calibration quality.
+
+        Args:
+            df_score: Calibrated scores from transform().
+            df_label: True binary labels (0 or 1).
+            bins: Score bin boundaries. Required parameter.
+                - For probability mode: use bins like [0, 0.1, 0.2, ..., 1.0]
+                - For score mapping mode: use bins like [300, 400, 500, ..., 1000]
+
+        Returns:
+            pd.DataFrame: Scorecard with columns including:
+                - score_bin: Score range intervals
+                - total, total_pct: Sample counts and percentages
+                - bad_rate, good_rate: Observed rates per bin
+                - approval_rate, bad_aft_rate: Cumulative rates
+                - odds_ratio, inv_odds_ratio: Odds comparison metrics
+                - ks, iv: KS statistic and Information Value
+
+        Raises:
+            ValueError: If bins not provided.
+
+        Example:
+            >>> scorecard = calibrator.compare_calibrate_result(
+            ...     scores, y_test, bins=[0, 500, 600, 700, 800, 1000]
+            ... )
         """
         if bins is None:
-            if self.score_type == "mega_score":
-                bins = [0, 300, 400, 500, 550, 600, 650, 700, 750, 800, 850, 1000]
-            elif self.score_type == "sub_score":
-                bins = [
-                    0,
-                    10,
-                    15,
-                    20,
-                    25,
-                    30,
-                    35,
-                    40,
-                    45,
-                    50,
-                    55,
-                    60,
-                    65,
-                    70,
-                    75,
-                    80,
-                    85,
-                    90,
-                    95,
-                    100,
-                ]
-            else:
-                raise Exception("bins is required for self-defining score type")
+            raise ValueError("bins is required for compare_calibrate_result()")
 
         lst_score = self.__check_type(df_score)
         lst_label = self.__check_type(df_label)
@@ -315,12 +301,24 @@ class Calibration(TransformerMixin):
         )
         df_res = df_res.reset_index()
 
+        bad_bef_rate = []
+        good_bef_rate = []
         bad_aft_rate = []
         good_aft_rate = []
         approval_rate = []
         for idx, _ in df_res.iterrows():
             with np.errstate(divide="ignore", invalid="ignore"):
                 approval_rate.append(df_res.iloc[idx:]["total_pct"].sum())
+                # Before rates: cumulative from start to current bin (inclusive)
+                bad_bef_rate.append(
+                    df_res.iloc[: idx + 1]["total_bad"].sum()
+                    / (df_res.iloc[: idx + 1]["total"].sum() + eps)
+                )
+                good_bef_rate.append(
+                    df_res.iloc[: idx + 1]["total_good"].sum()
+                    / (df_res.iloc[: idx + 1]["total"].sum() + eps)
+                )
+                # After rates: cumulative from current bin to end
                 bad_aft_rate.append(
                     df_res.iloc[idx:]["total_bad"].sum()
                     / (df_res.iloc[idx:]["total"].sum() + eps)
@@ -330,21 +328,25 @@ class Calibration(TransformerMixin):
                     / (df_res.iloc[idx:]["total"].sum() + eps)
                 )
         df_res["approval_rate"] = approval_rate
+        df_res["bad_bef_rate"] = bad_bef_rate
+        df_res["good_bef_rate"] = good_bef_rate
         df_res["bad_aft_rate"] = bad_aft_rate
         df_res["good_aft_rate"] = good_aft_rate
 
         df_res["score_max"] = df_res["score_bin"].apply(lambda x: x.right)
+        df_res["total_cum_pct"] = df_res["total_pct"].cumsum()
         df_res["good_dist"] = df_res["total_good"] / (df_res["total_good"].sum() + eps)
         df_res["bad_dist"] = df_res["total_bad"] / (df_res["total_bad"].sum() + eps)
 
-        if self.score_type == "probability":
-            df_res["exp_bad_rate"] = df_res["score_max"]
-        else:
+        if self._use_score_mapping:
             df_res["exp_bad_rate"] = df_res["score_max"].apply(
                 lambda x: self.lnodds2prob(
                     (x - self.mapping_intercept) / self.mapping_slope
                 )
             )
+        else:
+            # Probability mode: score_max is the probability itself
+            df_res["exp_bad_rate"] = df_res["score_max"]
 
         df_res["iv"] = (
             (df_res["bad_dist"] - df_res["good_dist"])
@@ -367,16 +369,18 @@ class Calibration(TransformerMixin):
 
         lst_col = [
             "score_bin",
-            "score_max",
             "total",
             "total_pct",
+            "total_cum_pct",
             "total_good",
             "good_rate",
             "good_dist",
+            "good_bef_rate",
             "good_aft_rate",
             "total_bad",
             "bad_rate",
             "bad_dist",
+            "bad_bef_rate",
             "bad_aft_rate",
             "approval_rate",
             "exp_bad_rate",
@@ -390,18 +394,35 @@ class Calibration(TransformerMixin):
 
     def get_bad_rate(self, score_min, score_max, step):
         """
-        Get the bad rate for a given score range.
+        Generate expected bad rate table for a score range.
 
-        Arguments:
-        score_min : int
-            The minimum score.
-        score_max : int
-            The maximum score.
-        step : int
-            The step size for the score range.
+        Calculates the theoretical bad rate at each score point based on
+        the fitted calibration mapping. Useful for score interpretation
+        and setting risk thresholds.
+
+        Args:
+            score_min: Minimum score value for the range.
+            score_max: Maximum score value for the range.
+            step: Step size between score points.
+
+        Returns:
+            pd.DataFrame: Table with columns:
+                - score: Score values from score_min to score_max
+                - bad_rate: Expected bad rate at each score
+                - lnodds: Log-odds value at each score
+
+        Raises:
+            ValueError: If in probability mode (no score mapping available).
+
+        Example:
+            >>> bad_rate_table = calibrator.get_bad_rate(300, 850, 50)
+            >>> print(bad_rate_table)
         """
-        if self.score_type == "probability":
-            raise Exception("probability score type, no score mapping process")
+        if not self._use_score_mapping:
+            raise ValueError(
+                "get_bad_rate() is not available in probability mode. "
+                "Provide mapping_base to use score mapping mode."
+            )
 
         ary_score = np.arange(score_min, score_max, step)
         ary_lnodds = (ary_score - self.mapping_intercept) / self.mapping_slope
@@ -410,10 +431,91 @@ class Calibration(TransformerMixin):
             {"score": ary_score, "bad_rate": ary_bad_rate, "lnodds": ary_lnodds}
         )
 
-    def get_calibrate_plot(self):
+    def _generate_calibrate_plot(
+        self,
+        y_true: np.ndarray,
+        y_prob_before: np.ndarray,
+        y_prob_after: np.ndarray,
+        n_bins: int = 10,
+        strategy: str = "uniform",
+        title: str = "Calibration Curve (Before vs After)",
+    ) -> plt.Figure:
         """
-        Plot the calibration result. The x-axis is the ln(odds(y_hat)) and the y-axis is the bad rate.
-        Ideally, the points should be close to the diagonal line.
+        Generate a calibration plot showing before and after calibration curves.
+
+        Uses sklearn's CalibrationDisplay to plot calibration curves. The plot shows
+        two curves: one for the original predictions (blue) and one for the calibrated
+        predictions (orange), along with the perfect calibration diagonal.
+
+        Args:
+            y_true: True binary labels.
+            y_prob_before: Predicted probabilities before calibration.
+            y_prob_after: Predicted probabilities after calibration.
+            n_bins: Number of bins for the calibration curve (default: 10).
+            strategy: Strategy for binning - 'uniform' or 'quantile' (default: 'uniform').
+            title: Title for the plot (default: 'Calibration Curve (Before vs After)').
+
+        Returns:
+            matplotlib.figure.Figure: The calibration plot figure.
+        """
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        # Plot before calibration curve (blue)
+        CalibrationDisplay.from_predictions(
+            y_true,
+            y_prob_before,
+            n_bins=n_bins,
+            strategy=strategy,
+            ax=ax,
+            name="Before Calibration",
+            color="blue",
+        )
+
+        # Plot after calibration curve (orange)
+        CalibrationDisplay.from_predictions(
+            y_true,
+            y_prob_after,
+            n_bins=n_bins,
+            strategy=strategy,
+            ax=ax,
+            name="After Calibration",
+            color="orange",
+        )
+
+        ax.set_title(title)
+        ax.legend(loc="lower right")
+        fig.tight_layout()
+        plt.close(fig)
+
+        return fig
+
+    def get_calibrate_plot(self) -> Optional[plt.Figure]:
+        """
+        Get the calibration plot figure generated during fit().
+
+        Returns the stored calibration plot showing before and after calibration curves.
+        This plot is automatically generated during fit() for all calibration modes.
+
+        Returns:
+            matplotlib.figure.Figure: The calibration plot figure, or None if fit() not called.
+
+        Example:
+            >>> calibrator = Calibration()
+            >>> calibrator.fit(y_prob_train, y_train)
+            >>> fig = calibrator.get_calibrate_plot()
+            >>> fig.savefig('calibration.png')
+        """
+        return self.calibrate_plot
+
+    def get_lnodds_calibrate_plot(self) -> plt.Axes:
+        """
+        Plot the log-odds calibration result (legacy method).
+
+        The x-axis is the ln(odds(y_hat)) and the y-axis is the bad rate.
+        Ideally, the points should be close to the fitted line.
+
+        Returns:
+            matplotlib.axes.Axes: The plot axes.
         """
         x = self.calibrate_detail["lnodds_prob_mean_x"]
         y_actual = self.calibrate_detail["lnodds_bad_rate_y"]
@@ -425,57 +527,12 @@ class Calibration(TransformerMixin):
         return ax
 
     @classmethod
-    def __set_default_score_base(cls, score_type):
-        if score_type == "mega_score":
-            mapping_base = {
-                500: 0.128,
-                550: 0.0671,
-                600: 0.0341,
-                650: 0.017,
-                700: 0.0084,
-                750: 0.0041,
-                800: 0.002,
-                850: 0.001,
-            }
-            score_cap = 1000
-            score_floor = 300
-
-        elif score_type == "sub_score":
-            mapping_base = {
-                10: 0.128,
-                15: 0.0987,
-                20: 0.0755,
-                25: 0.0574,
-                30: 0.0434,
-                35: 0.0327,
-                40: 0.0246,
-                45: 0.0185,
-                50: 0.0138,
-                55: 0.0104,
-                60: 0.0077,
-                65: 0.0058,
-                70: 0.0043,
-                75: 0.0032,
-                80: 0.0024,
-                85: 0.0018,
-                90: 0.0013,
-                95: 0.001,
-            }
-            score_cap = 100
-            score_floor = 0
-
-        else:
-            raise Exception(
-                "unknown score type, only mega_score and sub_score available"
-            )
-
-        return mapping_base, score_cap, score_floor
-
-    @classmethod
     def __set_mapping_base(cls, dict_base):
         # Linear regression for mapping base
-        lst_score = sorted(dict_base.keys())
-        lst_bad_rate = sorted(dict_base.values(), reverse=True)
+        # Sort by score, keeping score-bad_rate pairs together
+        items = sorted(dict_base.items(), key=lambda x: x[0])
+        lst_score = [item[0] for item in items]
+        lst_bad_rate = [item[1] for item in items]
         lst_lnodds_bad_rate = [cls.prob2lnodds(x) for x in lst_bad_rate]
 
         score_max, score_min = lst_score[-1], lst_score[0]

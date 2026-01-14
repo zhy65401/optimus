@@ -2,6 +2,7 @@
 Optimus: An end-to-end machine learning toolkit for financial risk modeling and credit scoring.
 
 This package provides comprehensive tools for:
+- Missing value imputation with feature-level control
 - Feature engineering and WOE encoding
 - Multi-dimensional feature selection
 - Model training and hyperparameter tuning
@@ -24,6 +25,7 @@ from .feature_selection import (
     PSISelector,
     VIFSelector,
 )
+from .imputer import Imputer
 
 # Metrics and tuning
 from .metrics import Metrics
@@ -40,6 +42,7 @@ __all__ = [
     # Main classes
     "Train",
     "Encoder",
+    "Imputer",
     "Calibration",
     "Preprocess",
     "Model",

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.base import TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin
 from statsmodels.stats.outliers_influence import variance_inflation_factor
 
 from .metrics import Metrics
@@ -17,7 +17,7 @@ from .metrics import Metrics
 warnings.filterwarnings("ignore")
 
 
-class Filter(TransformerMixin):
+class Filter(BaseEstimator, TransformerMixin):
     """
     A basic filter transformer for excluding specified columns from feature selection.
 
@@ -84,7 +84,7 @@ class Filter(TransformerMixin):
         return X[self.feature_names_]
 
 
-class CorrSelector(TransformerMixin):
+class CorrSelector(BaseEstimator, TransformerMixin):
     """
     Feature selector based on correlation analysis.
 
@@ -237,7 +237,26 @@ class CorrSelector(TransformerMixin):
         )
 
 
-class GINISelector(TransformerMixin):
+class GINISelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on GINI coefficient sign consistency.
+
+    Selects features where the GINI coefficient has the same sign in both
+    training and reference (test) datasets. This ensures feature predictive
+    direction is stable across datasets.
+
+    Attributes:
+        detail: DataFrame with GINI values for train/test and selection status
+        selected_features: List of features with consistent GINI sign
+        removed_features: List of features with inconsistent GINI sign
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = GINISelector()
+        >>> selector.fit(X_train, y_train, refX=X_test, refy=y_test)
+        >>> X_selected = selector.transform(X_train)
+    """
+
     def __init__(self, user_feature_list=None):
         self.detail = None
         self.selected_features = list()
@@ -291,7 +310,32 @@ class GINISelector(TransformerMixin):
         )
 
 
-class PSISelector(TransformerMixin):
+class PSISelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on Population Stability Index (PSI).
+
+    Removes features with PSI above the threshold, indicating distribution
+    drift between training and reference datasets. Low PSI indicates stable
+    feature distributions.
+
+    PSI Interpretation:
+        - < 0.1: No significant change
+        - 0.1 - 0.2: Moderate change, monitoring needed
+        - > 0.2: Significant change, feature may be unstable
+
+    Attributes:
+        detail: DataFrame with PSI values and selection status
+        selected_features: List of stable features (PSI < threshold)
+        removed_features: List of unstable features (PSI >= threshold)
+        psi_threshold: PSI threshold for feature removal
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = PSISelector(psi_threshold=0.1)
+        >>> selector.fit(X_train, y_train, refX=X_test, refy=y_test)
+        >>> X_selected = selector.transform(X_train)
+    """
+
     def __init__(self, psi_threshold=0.1, user_feature_list=None):
         self.detail = None
         self.selected_features = list()
@@ -342,7 +386,33 @@ class PSISelector(TransformerMixin):
         )
 
 
-class IVSelector(TransformerMixin):
+class IVSelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on Information Value (IV).
+
+    Removes features with IV below the threshold, indicating weak predictive
+    power. IV measures how well a feature separates good and bad outcomes.
+
+    IV Interpretation:
+        - < 0.02: Not useful for prediction
+        - 0.02 - 0.1: Weak predictive power
+        - 0.1 - 0.3: Medium predictive power
+        - 0.3 - 0.5: Strong predictive power
+        - > 0.5: Suspicious (may indicate overfitting)
+
+    Attributes:
+        detail: DataFrame with IV values and selection status
+        selected_features: List of predictive features (IV >= threshold)
+        removed_features: List of weak features (IV < threshold)
+        iv_threshold: IV threshold for feature selection
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = IVSelector(iv_threshold=0.02)
+        >>> selector.fit(X_train, y_train)
+        >>> X_selected = selector.transform(X_train)
+    """
+
     def __init__(self, iv_threshold=0.02, user_feature_list=None):
         self.detail = None
         self.selected_features = list()
@@ -378,7 +448,33 @@ class IVSelector(TransformerMixin):
         )
 
 
-class VIFSelector(TransformerMixin):
+class VIFSelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on Variance Inflation Factor (VIF).
+
+    Removes features with VIF above the threshold, indicating high
+    multicollinearity with other features. High VIF values suggest
+    redundant information.
+
+    VIF Interpretation:
+        - 1: No correlation with other features
+        - 1 - 5: Moderate correlation
+        - 5 - 10: High correlation, potential issue
+        - > 10: Severe multicollinearity, should remove
+
+    Attributes:
+        detail: DataFrame with VIF values and selection status
+        selected_features: List of independent features (VIF < threshold)
+        removed_features: List of collinear features (VIF >= threshold)
+        vif_threshold: VIF threshold for feature removal
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = VIFSelector(vif_threshold=10)
+        >>> selector.fit(X_train, y_train)
+        >>> X_selected = selector.transform(X_train)
+    """
+
     def __init__(self, vif_threshold=10, user_feature_list=None):
         self.detail = None
         self.selected_features = list()
@@ -423,7 +519,27 @@ class VIFSelector(TransformerMixin):
         )
 
 
-class BoostingTreeSelector(TransformerMixin):
+class BoostingTreeSelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on LightGBM feature importance.
+
+    Uses a LightGBM classifier to rank features by importance and selects
+    the top fraction of features with non-zero importance. Useful for
+    identifying the most predictive features in high-dimensional datasets.
+
+    Attributes:
+        detail: DataFrame with feature importance and selection status
+        selected_features: List of top important features
+        removed_features: List of less important features
+        select_frac: Fraction of non-zero importance features to keep
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = BoostingTreeSelector(select_frac=0.9)
+        >>> selector.fit(X_train, y_train, refX=X_test, refy=y_test)
+        >>> X_selected = selector.transform(X_train)
+    """
+
     def __init__(self, select_frac=0.9, user_feature_list=None):
         self.detail = None
         self.selected_features = list()
@@ -504,7 +620,214 @@ class BoostingTreeSelector(TransformerMixin):
         )
 
 
-class ManualSelector(TransformerMixin):
+class StabilitySelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector based on stability selection method.
+
+    Performs multiple rounds of feature selection on random subsamples of the data
+    to identify features that are consistently selected. This approach reduces the
+    risk of selecting spurious features and improves generalization.
+
+    The method works by:
+    1. Creating multiple bootstrap/subsample datasets
+    2. Training a base model (LightGBM) on each subsample
+    3. Recording which features are selected (have non-zero importance)
+    4. Selecting features that appear in a minimum fraction of iterations
+
+    Attributes:
+        detail: DataFrame with selection frequency and selection status
+        selected_features: List of stably selected features
+        removed_features: List of unstable features
+        n_iterations: Number of subsampling iterations
+        sample_fraction: Fraction of data to sample in each iteration
+        threshold: Minimum selection frequency (0-1) to consider a feature stable
+        select_frac: Fraction of top features to consider in each iteration
+        random_state: Random seed for reproducibility
+        user_feature_list: Optional list of specific features to consider
+
+    Example:
+        >>> selector = StabilitySelector(
+        ...     n_iterations=100,
+        ...     sample_fraction=0.75,
+        ...     threshold=0.6,
+        ...     random_state=42
+        ... )
+        >>> selector.fit(X_train, y_train)
+        >>> X_selected = selector.transform(X_train)
+    """
+
+    def __init__(
+        self,
+        n_iterations: int = 100,
+        sample_fraction: float = 0.75,
+        threshold: float = 0.1,
+        select_frac: float = 0.5,
+        random_state: Optional[int] = None,
+        user_feature_list: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Initialize the stability selector.
+
+        Args:
+            n_iterations: Number of subsampling iterations (default: 100)
+            sample_fraction: Fraction of data to sample in each iteration (default: 0.75)
+            threshold: Minimum selection frequency to consider feature stable (default: 0.6)
+                - Values closer to 1.0 are more conservative
+                - Values closer to 0.5 are more permissive
+            select_frac: Fraction of top features to select in each iteration (default: 0.5)
+            random_state: Random seed for reproducibility (default: None)
+            user_feature_list: Optional list of specific features to consider
+        """
+        self.detail: Optional[pd.DataFrame] = None
+        self.selected_features: List[str] = []
+        self.removed_features: List[str] = []
+        self.n_iterations = n_iterations
+        self.sample_fraction = sample_fraction
+        self.threshold = threshold
+        self.select_frac = select_frac
+        self.random_state = random_state
+        self.user_feature_list = user_feature_list
+
+    def fit(
+        self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray]
+    ) -> "StabilitySelector":
+        """
+        Fit the stability selector to identify stable features.
+
+        Args:
+            X: Input feature matrix
+            y: Target variable
+
+        Returns:
+            self: Fitted selector
+
+        Examples:
+            >>> selector = StabilitySelector(n_iterations=50, threshold=0.7)
+            >>> selector.fit(X_train, y_train)
+            >>> print(f"Selected {len(selector.selected_features)} stable features")
+        """
+        print("[INFO]: Processing Stability Selector...")
+        feature_list = sorted(self.user_feature_list or X.columns.tolist())
+        n_samples = len(X)
+        sample_size = int(n_samples * self.sample_fraction)
+
+        # Track how many times each feature is selected
+        selection_counts = {feature: 0 for feature in feature_list}
+
+        # Set random state
+        if self.random_state is not None:
+            np.random.seed(self.random_state)
+
+        # Perform stability selection iterations
+        for _ in range(self.n_iterations):
+            # Create random subsample
+            sample_indices = np.random.choice(
+                n_samples, size=sample_size, replace=False
+            )
+            X_sample = X.iloc[sample_indices][feature_list]
+            y_sample = (
+                y.iloc[sample_indices]
+                if isinstance(y, pd.Series)
+                else y[sample_indices]
+            )
+
+            # Train LightGBM model on subsample
+            model = lgb.LGBMClassifier(
+                boosting_type="gbdt",
+                num_leaves=31,
+                max_depth=5,
+                learning_rate=0.05,
+                n_estimators=100,
+                min_child_samples=20,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=self.random_state,
+                verbosity=-1,
+            )
+
+            model.fit(X_sample, y_sample)
+
+            # Get feature importances
+            importances = model.feature_importances_
+            df_imp = pd.DataFrame(
+                {"feature": feature_list, "importance": importances}
+            ).sort_values(by="importance", ascending=False)
+
+            # Select top fraction of features with non-zero importance
+            n_nonzero = (df_imp["importance"] > 0).sum()
+            n_select = max(1, int(self.select_frac * n_nonzero))
+            selected_in_iteration = df_imp.head(n_select)["feature"].tolist()
+
+            # Update selection counts
+            for feature in selected_in_iteration:
+                selection_counts[feature] += 1
+
+        # Calculate selection frequencies
+        selection_frequencies = {
+            feature: count / self.n_iterations
+            for feature, count in selection_counts.items()
+        }
+
+        # Create result dataframe
+        df_res = pd.DataFrame(
+            {
+                "var": feature_list,
+                "selection_frequency": [selection_frequencies[f] for f in feature_list],
+                "selection_count": [selection_counts[f] for f in feature_list],
+            }
+        ).sort_values(by="selection_frequency", ascending=False)
+
+        # Select features that meet the threshold
+        df_res["selected"] = df_res["selection_frequency"] >= self.threshold
+
+        self.detail = df_res
+        self.selected_features = df_res.loc[df_res["selected"] == True, "var"].tolist()
+        self.removed_features = df_res.loc[df_res["selected"] == False, "var"].tolist()
+        self.summary()
+        return self
+
+    def transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
+        """
+        Transform by selecting only the stable features.
+
+        Args:
+            X: Input feature matrix
+            y: Target variable (not used, for sklearn compatibility)
+
+        Returns:
+            pd.DataFrame: Transformed feature matrix with only stable features
+        """
+        return X[self.selected_features]
+
+    def summary(self) -> None:
+        """Print summary of feature selection results."""
+        print(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        )
+        print(
+            "\n==============================================================================="
+        )
+
+
+class ManualSelector(BaseEstimator, TransformerMixin):
+    """
+    Feature selector for manually dropping specified features.
+
+    Allows explicit control over which features to exclude from the dataset.
+    Useful for removing ID columns, timestamps, or known problematic features.
+
+    Attributes:
+        detail: DataFrame with feature names and selection status
+        selected_features: List of features to keep
+        removed_features: List of manually dropped features
+        drop_features: List of feature names to drop
+
+    Example:
+        >>> selector = ManualSelector(drop_features=['id', 'timestamp'])
+        >>> selector.fit(X, y)
+        >>> X_selected = selector.transform(X)
+    """
+
     def __init__(self, drop_features=None):
         self.detail = None
         self.selected_features = list()

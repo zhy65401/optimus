@@ -1,7 +1,8 @@
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from sklearn.pipeline import Pipeline
+import pandas as pd
+from sklearn.base import clone
 
 from .encoder import Encoder
 from .estimator import Benchmark
@@ -12,9 +13,16 @@ from .feature_selection import (
     IVSelector,
     ManualSelector,
     PSISelector,
+    StabilitySelector,
     VIFSelector,
 )
+from .imputer import Imputer
 from .tuner import BO, GridSearch
+
+# Transformers that require reference dataset for fitting
+_REF_AWARE_TRANSFORMERS = frozenset(
+    ["PSISelector", "GINISelector", "BoostingTreeSelector"]
+)
 
 
 class _DefaultParams(Enum):
@@ -26,7 +34,8 @@ class _DefaultParams(Enum):
     psi_threshold = 0.1
     iv_threshold = 0.02
     vif_threshold = 10
-    select_frac = 0.9
+    boosting_select_frac = 0.95
+    stability_threshold = 0.1
 
 
 class Preprocess:
@@ -34,11 +43,16 @@ class Preprocess:
     Preprocessing pipeline builder for feature engineering and selection in risk modeling.
 
     This class creates a comprehensive preprocessing pipeline that includes:
+    - Missing value imputation with feature-level strategy control (optional)
     - WOE (Weight of Evidence) encoding for categorical and numerical features
     - Multiple feature selection methods (correlation, IV, PSI, VIF, GINI, boosting)
     - Flexible pipeline configuration with customizable parameters
 
+    Supports reference dataset (e.g., test set) for PSI/GINI/Boosting selectors
+    via fit(X_train, y_train, X_ref=X_test, y_ref=y_test).
+
     The preprocessing pipeline follows this sequence:
+    0. Impute (optional): Fill missing values using statistical measures
     1. WOE Encoding: Transform features using Weight of Evidence
     2. IV Selection: Remove features with low Information Value
     3. PSI Selection: Remove features with high Population Stability Index
@@ -46,39 +60,42 @@ class Preprocess:
     5. Correlation Selection: Remove highly correlated features
     6. VIF Selection: Remove features with high multicollinearity
     7. Boosting Selection: Select top features using tree-based importance
+    8. Stability Selection: Select stable features across subsamples
 
     Attributes:
+        impute_strategy (dict): Feature-level imputation strategies (default: None)
         corr_threshold (float): Correlation threshold for feature removal (default: 0.95)
         psi_threshold (float): PSI threshold for feature stability (default: 0.1)
         iv_threshold (float): Information Value threshold for feature importance (default: 0.02)
         vif_threshold (float): Variance Inflation Factor threshold for multicollinearity (default: 10)
-        select_frac (float): Fraction of features to select in boosting tree selector (default: 0.9)
+        boosting_select_frac (float): Fraction of features to select in boosting tree selector (default: 0.9)
+        stability_threshold (float): Stability selection threshold (default: 0.6)
         missing_values (list): List of values to treat as missing
         treat_missing (str): Strategy for handling missing values ('mean', 'min', 'max', 'zero')
         ignore_preprocessors (list): List of preprocessor names to skip during pipeline building
         drop_features (list): List of feature names to manually drop before preprocessing
-
-    Examples:
-        >>> # Basic usage
-        >>> preprocessor = Preprocess()
-        >>> pipeline = preprocessor.build_pipeline(feature_spec)
-
-        >>> # Custom configuration
-        >>> preprocessor = Preprocess(
-        ...     corr_threshold=0.9,
-        ...     iv_threshold=0.03,
-        ...     ignore_preprocessors=['VIF'],
-        ...     drop_features=['id', 'timestamp']
-        ... )
-        >>> pipeline = preprocessor.build_pipeline(feature_spec)
     """
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(
+        self, spec: Optional[Dict[str, Union[str, List[float]]]] = None, **kwargs: Any
+    ) -> None:
         """
         Initialize preprocessing pipeline with custom parameters.
 
         Args:
+            spec: Feature specification dict mapping feature names to binning strategies.
+                Can also be set later via fit(). Options:
+                - 'auto': Automatically choose best strategy based on feature type
+                - 'qcut': Equal frequency binning
+                - 'chiMerge': Chi-square based binning
+                - 'bestKS': KS statistic based optimal binning
+                - 'woeMerge': WOE based categorical merging
+                - 'optimal': OptimalBinning algorithm
+                - List[float]: Custom bin boundaries for numerical features
+                - False: No binning (keep original categories)
             **kwargs: Keyword arguments for preprocessing parameters:
+                impute_strategy (dict): Dictionary mapping feature names to imputation strategies.
+                    Options: 'mean', 'median', 'min', 'max', 'mode', 'separate'. Default: None
                 corr_threshold (float): Correlation threshold for removing highly correlated features.
                     Features with correlation above this threshold will be removed. Default: 0.95
                 psi_threshold (float): Population Stability Index threshold for feature stability.
@@ -87,14 +104,16 @@ class Preprocess:
                     Features with IV below this threshold have weak predictive power. Default: 0.02
                 vif_threshold (float): Variance Inflation Factor threshold for multicollinearity.
                     Features with VIF above this threshold indicate multicollinearity. Default: 10
-                select_frac (float): Fraction of features to select in boosting tree selector.
+                boosting_select_frac (float): Fraction of features to select in boosting tree selector.
                     Must be between 0 and 1. Default: 0.9
+                stability_threshold (float): Stability selection threshold for feature stability.
+                    Features with stability below this threshold will be removed. Default: 0.6
                 missing_values (list): List of values to treat as missing data.
                     Default: [-999999, -999998, -990000, "__N.A.__"]
-                treat_missing (str): Strategy for handling missing values.
+                treat_missing (str): Strategy for handling missing values in WOE encoding.
                     Options: 'mean', 'min', 'max', 'zero'. Default: 'mean'
                 ignore_preprocessors (list): List of preprocessor names to skip during pipeline building.
-                    Options: ['IV', 'PSI', 'GINI', 'Corr', 'VIF', 'Boosting']. Default: []
+                    Options: ['Impute', 'WOE', 'Original', 'Manual', 'IV', 'PSI', 'Gini', 'Corr', 'VIF', 'Boosting', 'Benchmark']. Default: []
                 drop_features (list): List of feature names to manually drop before preprocessing.
                     These features will be excluded from the entire pipeline. Default: []
 
@@ -115,6 +134,8 @@ class Preprocess:
             ...     drop_features=['id', 'timestamp', 'created_at']
             ... )
         """
+        self.spec = spec
+        self.impute_strategy = kwargs.get("impute_strategy", None)
         self.corr_threshold = kwargs.get(
             "corr_threshold", _DefaultParams.corr_threshold.value
         )
@@ -127,7 +148,6 @@ class Preprocess:
         self.vif_threshold = kwargs.get(
             "vif_threshold", _DefaultParams.vif_threshold.value
         )
-        self.select_frac = kwargs.get("select_frac", _DefaultParams.select_frac.value)
         self.missing_values = kwargs.get(
             "missing_values", _DefaultParams.missing_values.value
         )
@@ -136,111 +156,189 @@ class Preprocess:
         )
         self.ignore_preprocessors = kwargs.get("ignore_preprocessors", [])
         self.drop_features = kwargs.get("drop_features", [])
-
-    def build_pipeline(self, spec: Dict[str, Union[str, List[float]]]) -> Pipeline:
-        """
-        Build a complete preprocessing pipeline for risk modeling features.
-
-        Creates a scikit-learn Pipeline with comprehensive feature engineering and selection:
-
-        Pipeline Structure:
-        1. **WOE Encoder**: Transforms features using Weight of Evidence encoding
-        2. **Feature Selection**: Applies multiple selection methods sequentially:
-           - Manual feature dropping (if specified)
-           - IV filtering (removes low-importance features)
-           - PSI filtering (removes unstable features)
-           - GINI filtering (removes features with wrong signs)
-           - Correlation filtering (removes highly correlated features)
-           - VIF filtering (removes multicollinear features)
-           - Boosting selection (selects top features by importance)
-        3. **Benchmark Model**: Integrates a logistic regression benchmark
-
-        Args:
-            spec: Feature specification dictionary mapping feature names to binning strategies.
-                Keys: feature names (str)
-                Values: binning strategy options:
-                    - 'auto': Automatically choose best strategy based on feature type
-                    - 'qcut': Equal frequency binning
-                    - 'chiMerge': Chi-square based binning
-                    - 'bestKS': KS statistic based optimal binning
-                    - 'woeMerge': WOE based categorical merging
-                    - 'optimal': OptimalBinning algorithm
-                    - List[float]: Custom bin boundaries for numerical features
-                    - False: No binning (keep original categories)
-
-        Returns:
-            Pipeline: Complete preprocessing pipeline with named steps:
-                - 'WOE': Weight of Evidence encoder
-                - 'FS': Feature selection pipeline with configurable selectors
-                - 'Benchmark': Benchmark logistic regression model
-
-        Raises:
-            ValueError: If spec is empty or contains invalid binning strategies
-
-        Examples:
-            >>> # Basic feature specification
-            >>> spec = {
-            ...     'age': 'bestKS',
-            ...     'income': 'chiMerge',
-            ...     'education': 'woeMerge',
-            ...     'employment_length': 'optimal'
-            ... }
-            >>> preprocessor = Preprocess()
-            >>> pipeline = preprocessor.build_pipeline(spec)
-
-            >>> # Custom binning with specific thresholds
-            >>> spec = {
-            ...     'age': [18, 25, 35, 45, 55, 65, 100],
-            ...     'score': 'bestKS',
-            ...     'category': False  # No binning
-            ... }
-            >>> preprocessor = Preprocess(
-            ...     corr_threshold=0.9,
-            ...     ignore_preprocessors=['VIF']
-            ... )
-            >>> pipeline = preprocessor.build_pipeline(spec)
-
-            >>> # Using the pipeline
-            >>> pipeline.fit(X_train, y_train)
-            >>> X_transformed = pipeline.transform(X_test)
-        """
-        fs_func_bank = {
-            "Original": ManualSelector(drop_features=[]),
-            "Manual": ManualSelector(drop_features=self.drop_features),
-            "Corr": CorrSelector(corr_threshold=self.corr_threshold),
-            "Gini": GINISelector(),
-            "PSI": PSISelector(psi_threshold=self.psi_threshold),
-            "IV": IVSelector(iv_threshold=self.iv_threshold),
-            "VIF": VIFSelector(vif_threshold=self.vif_threshold),
-            "Boosting": BoostingTreeSelector(select_frac=self.select_frac),
-        }
-        feature_selection_pipe = Pipeline(
-            [
-                (name, fs_func)
-                for name, fs_func in fs_func_bank.items()
-                if name not in self.ignore_preprocessors
-            ]
+        self.boosting_select_frac = kwargs.get(
+            "boosting_select_frac", _DefaultParams.boosting_select_frac.value
+        )
+        self.stability_threshold = kwargs.get(
+            "stability_threshold", _DefaultParams.stability_threshold.value
         )
 
-        return Pipeline(
-            [
+        # Fitted state
+        self._steps: List[tuple] = []
+        self._fitted_steps: List[tuple] = []
+
+    def _build_steps(self, spec: Dict[str, Union[str, List[float]]]) -> List[tuple]:
+        """Build pipeline steps from spec."""
+        # Safety check: if WOE is ignored, impute_strategy must be provided
+        if "WOE" in self.ignore_preprocessors and not self.impute_strategy:
+            raise ValueError(
+                "When 'WOE' is in ignore_preprocessors, impute_strategy must be provided. "
+                "WOE encoder handles missing values, but if skipped, Imputer must replace it."
+            )
+
+        all_steps = []
+        if self.impute_strategy:
+            all_steps.append(
                 (
-                    "WOE",
-                    Encoder(
-                        spec=spec,
-                        treat_missing="mean",
+                    "Impute",
+                    Imputer(
+                        impute_strategy=self.impute_strategy,
                         missing_values=self.missing_values,
                     ),
+                )
+            )
+        all_steps.append(
+            (
+                "WOE",
+                Encoder(
+                    spec=spec,
+                    treat_missing=self.treat_missing,
+                    missing_values=self.missing_values,
                 ),
-                ("FS", feature_selection_pipe),
+            )
+        )
+        all_steps.extend(
+            [
+                ("Original", ManualSelector(drop_features=[])),
+                ("Manual", ManualSelector(drop_features=self.drop_features)),
+                ("IV", IVSelector(iv_threshold=self.iv_threshold)),
+                ("PSI", PSISelector(psi_threshold=self.psi_threshold)),
+                ("Gini", GINISelector()),
+                ("Corr", CorrSelector(corr_threshold=self.corr_threshold)),
+                ("VIF", VIFSelector(vif_threshold=self.vif_threshold)),
                 (
-                    "Benchmark",
-                    Benchmark(
-                        positive_coef=False, remove_method="iv", pvalue_threshold=0.05
-                    ),
+                    "Boosting",
+                    BoostingTreeSelector(select_frac=self.boosting_select_frac),
                 ),
+                ("Stability", StabilitySelector(threshold=self.stability_threshold)),
             ]
         )
+        all_steps.append(
+            (
+                "Benchmark",
+                Benchmark(
+                    positive_coef=False, remove_method="iv", pvalue_threshold=0.05
+                ),
+            )
+        )
+        steps = [
+            (name, transformer)
+            for name, transformer in all_steps
+            if name not in self.ignore_preprocessors
+        ]
+
+        return steps
+
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        X_ref: Optional[pd.DataFrame] = None,
+        y_ref: Optional[pd.Series] = None,
+        spec: Optional[Dict[str, Union[str, List[float]]]] = None,
+    ) -> "Preprocess":
+        """
+        Fit the preprocessing pipeline.
+
+        Args:
+            X: Training feature matrix
+            y: Training target variable
+            X_ref: Reference feature matrix (e.g., test set) for PSI/GINI/Boosting.
+                If None, X will be used as reference (not recommended).
+            y_ref: Reference target variable
+            spec: Feature specification (overrides __init__ spec if provided)
+
+        Returns:
+            self: Fitted preprocessor
+        """
+
+        spec = spec or self.spec
+        if spec is None:
+            raise ValueError("spec must be provided either in __init__ or fit()")
+
+        self._steps = self._build_steps(spec)
+        self._fitted_steps = []
+
+        Xt = X.copy()
+        Xt_ref = X_ref.copy() if X_ref is not None else None
+
+        for idx, (name, transformer) in enumerate(self._steps):
+            fitted_transformer = clone(transformer)
+            is_last = idx == len(self._steps) - 1
+
+            # Skip feature selection if no features remain
+            if Xt.shape[1] == 0:
+                print(
+                    f"[WARN] No features remaining, skipping {name} and subsequent steps."
+                )
+                # Store a passthrough transformer that keeps empty state
+                fitted_transformer.selected_features = []
+                fitted_transformer.removed_features = []
+                self._fitted_steps.append((name, fitted_transformer))
+                continue
+
+            if transformer.__class__.__name__ in _REF_AWARE_TRANSFORMERS:
+                fitted_transformer.fit(
+                    Xt,
+                    y,
+                    refX=Xt_ref if Xt_ref is not None else Xt,
+                    refy=y_ref if y_ref is not None else y,
+                )
+            else:
+                fitted_transformer.fit(Xt, y)
+
+            self._fitted_steps.append((name, fitted_transformer))
+
+            # Transform for next step (unless last)
+            if not is_last and hasattr(fitted_transformer, "transform"):
+                Xt = fitted_transformer.transform(Xt)
+                if Xt_ref is not None:
+                    Xt_ref = fitted_transformer.transform(Xt_ref)
+
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Transform data using fitted pipeline.
+
+        Args:
+            X: Feature matrix to transform
+
+        Returns:
+            Transformed feature matrix
+        """
+        if not self._fitted_steps:
+            raise RuntimeError("Preprocessor not fitted. Call fit() first.")
+
+        Xt = X.copy()
+        for name, transformer in self._fitted_steps:
+            if hasattr(transformer, "transform"):
+                Xt = transformer.transform(Xt)
+        return Xt
+
+    def fit_transform(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        X_ref: Optional[pd.DataFrame] = None,
+        y_ref: Optional[pd.Series] = None,
+        spec: Optional[Dict[str, Union[str, List[float]]]] = None,
+    ) -> pd.DataFrame:
+        """Fit and transform in one step."""
+        self.fit(X, y, X_ref=X_ref, y_ref=y_ref, spec=spec)
+        return self.transform(X)
+
+    def get_step(self, name: str) -> Any:
+        """Get a fitted step by name."""
+        for step_name, transformer in self._fitted_steps:
+            if step_name == name:
+                return transformer
+        raise KeyError(f"Step '{name}' not found")
+
+    @property
+    def named_steps(self) -> Dict[str, Any]:
+        """Get fitted steps as a dictionary."""
+        return {name: t for name, t in self._fitted_steps}
 
 
 class Model:

@@ -254,7 +254,7 @@ calibrator = Calibration(
 
 ### Report Generation
 
-Automated professional modeling reports:
+Automated professional modeling reports with SHAP analysis:
 
 ```python
 from optimus.reporter import Reporter
@@ -270,6 +270,7 @@ reporter.generate_report(performance_data)
 # - Model performance metrics
 # - Hyperparameter tuning results
 # - Model calibration analysis
+# - **NEW**: SHAP analysis (feature importance, dependence plots, case studies)
 ```
 
 Report contents include:
@@ -278,6 +279,10 @@ Report contents include:
 - Feature selection details
 - Model performance metrics
 - Hyperparameter tuning results
+- **SHAP analysis** (automatically generated for LR, XGB, LGBM models):
+  - Global feature importance with summary plots
+  - Feature dependence plots showing non-linear relationships
+  - Sample-level explanations with waterfall plots
 - Model calibration analysis
 
 ## Usage Examples
