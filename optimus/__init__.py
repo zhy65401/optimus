@@ -34,7 +34,7 @@ from .reporter import Reporter
 from .trainer import Train
 from .tuner import BO, GridSearch
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __author__ = "Hanyuan Zhang"
 __email__ = "klesterchueng@gmail.com"
 

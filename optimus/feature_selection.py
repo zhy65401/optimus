@@ -568,7 +568,7 @@ class BoostingTreeSelector(BaseEstimator, TransformerMixin):
             colsample_bytree=1.0,
             reg_alpha=0.0,
             reg_lambda=0.0,
-            random_state=0,
+            random_state=581,  # Fixed random seed for reproducibility
             importance_type="split",
             verbosity=-1,
         )

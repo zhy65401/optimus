@@ -178,16 +178,23 @@ class Encoder(BaseEstimator, TransformerMixin):
 
         neg_odds = []
         pos_odds = []
+        eps = np.finfo(float).eps  # Machine epsilon for float
+
         for idx, _ in df.iterrows():
             with np.errstate(divide="ignore", invalid="ignore"):
                 bad_bef = df.iloc[: idx + 1]["bad"].sum()
                 good_bef = df.iloc[: idx + 1]["good"].sum()
-                odds_bef = np.float64(bad_bef) / good_bef
+                # Use maximum to prevent division by zero
+                odds_bef = np.float64(bad_bef) / np.maximum(good_bef, eps)
+
                 bad_aft = df.iloc[idx + 1 :]["bad"].sum()
                 good_aft = df.iloc[idx + 1 :]["good"].sum()
-                odds_aft = np.float64(bad_aft) / good_aft
-                neg_odds.append(np.float64(odds_bef) / odds_aft)
-                pos_odds.append(np.float64(odds_aft) / odds_bef)
+                # Use maximum to prevent division by zero
+                odds_aft = np.float64(bad_aft) / np.maximum(good_aft, eps)
+
+                # Calculate ratio odds with protection
+                neg_odds.append(np.float64(odds_bef) / np.maximum(odds_aft, eps))
+                pos_odds.append(np.float64(odds_aft) / np.maximum(odds_bef, eps))
 
         return neg_odds, pos_odds
 

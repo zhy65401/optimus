@@ -9,6 +9,7 @@ Optimus is a powerful machine learning toolkit specifically designed for the dev
 ### Key Advantages
 
 - **Comprehensive Training Pipeline**: End-to-end `Train` class for streamlined model development
+- **Intelligent Missing Value Handling**: Feature-level `Imputer` class with multiple imputation strategies (mean, median, mode, etc.)
 - **Professional Binning Strategies**: Support for multiple intelligent binning algorithms (ChiMerge, BestKS, WOEMerge, OptimalBinning, etc.)
 - **Smart Feature Selection**: Statistical metric-based feature filtering (IV, KS, Gini, PSI, VIF, correlation)
 - **Multi-Model Support**: Integration of mainstream algorithms like Logistic Regression, XGBoost, LightGBM
@@ -26,7 +27,7 @@ Optimus is a powerful machine learning toolkit specifically designed for the dev
 pip install git+https://github.com/zhy65401/optimus.git
 
 # Install specific version/branch
-pip install git+https://github.com/zhy65401/optimus.git@v0.3.0
+pip install git+https://github.com/zhy65401/optimus.git@v0.3.1
 
 # Install from source for development
 git clone https://github.com/zhy65401/optimus.git
@@ -58,13 +59,24 @@ performance = trainer.transform(X, y, e)
 
 ```python
 import pandas as pd
+from optimus.imputer import Imputer
 from optimus.encoder import Encoder
 from optimus.feature_selection import IVSelector, CorrSelector
 from optimus.estimator import Benchmark
 from optimus.calibrator import Calibration
 from sklearn.pipeline import Pipeline
 
-# 1. Data preprocessing and feature encoding
+# 1. Missing value imputation (NEW in v0.3.1)
+imputer = Imputer(
+    impute_strategy={
+        'age': 'median',
+        'income': 'mean',
+        'occupation': 'mode'
+    },
+    missing_values=[-999, '__N.A__']
+)
+
+# 2. Data preprocessing and feature encoding
 encoder = Encoder(spec={
     'age': 'bestKS',           # Numerical feature using BestKS binning
     'income': 'chiMerge',      # Numerical feature using ChiMerge binning
@@ -72,20 +84,21 @@ encoder = Encoder(spec={
     'education': [1, 2, 3, 4]   # Custom binning boundaries
 })
 
-# 2. Feature selection pipeline
+# 3. Feature selection pipeline
 feature_selector = Pipeline([
     ('iv', IVSelector(iv_threshold=0.02)),
     ('corr', CorrSelector(corr_threshold=0.95))
 ])
 
-# 3. Model training
+# 4. Model training
 benchmark = Benchmark(positive_coef=False, remove_method="iv")
 
-# 4. Model calibration
+# 5. Model calibration
 calibrator = Calibration(score_type='mega_score')
 
 # Complete workflow example
-X_train_encoded = encoder.fit_transform(X_train, y_train)
+X_train_imputed = imputer.fit_transform(X_train)
+X_train_encoded = encoder.fit_transform(X_train_imputed, y_train)
 X_selected = feature_selector.fit_transform(X_train_encoded, y_train)
 model = benchmark.fit(X_selected, y_train)
 ```
@@ -93,6 +106,46 @@ model = benchmark.fit(X_selected, y_train)
 ## Feature Overview
 
 ### Data Preprocessing
+
+#### Missing Value Imputation
+
+The `Imputer` class provides flexible missing value handling with feature-level control:
+
+```python
+from optimus.imputer import Imputer
+import pandas as pd
+import numpy as np
+
+# Sample data with missing values
+X = pd.DataFrame({
+    'age': [25, np.nan, 45, -999999, 65],
+    'income': [30000, 50000, np.nan, 90000, 110000],
+    'education': ['high_school', 'bachelor', '__N.A__', 'phd', 'bachelor']
+})
+
+# Define imputation strategies for each feature
+impute_strategy = {
+    'age': 'mean',       # Fill age with mean
+    'income': 'median',  # Fill income with median
+    'education': 'mode'  # Fill education with most frequent value
+}
+
+# Initialize and apply imputer
+imputer = Imputer(
+    impute_strategy=impute_strategy,
+    missing_values=[-999999, '__N.A__']  # Custom missing value markers
+)
+imputer.fit(X)
+X_imputed = imputer.transform(X)
+
+# Available strategies:
+# - 'mean': Mean of non-missing values (numerical only)
+# - 'median': Median of non-missing values (numerical only)
+# - 'min': Minimum of non-missing values (numerical only)
+# - 'max': Maximum of non-missing values (numerical only)
+# - 'mode': Most frequent value (numerical and categorical)
+# - 'separate': Keep missing values as-is for separate category handling
+```
 
 #### Smart Binning
 - **QCut**: Equal frequency binning for continuous numerical features
@@ -145,8 +198,9 @@ Multi-dimensional feature filtering strategies:
 
 ```python
 from optimus.feature_selection import (
-    IVSelector, PSISelector, GINISelector, 
-    CorrSelector, VIFSelector, BoostingTreeSelector
+    IVSelector, PSISelector, GINISelector,
+    CorrSelector, VIFSelector, BoostingTreeSelector,
+    StabilitySelector  # NEW in v0.3.1
 )
 
 # IV value filtering
@@ -164,8 +218,18 @@ corr_selector = CorrSelector(corr_threshold=0.95, method='iv_descending')
 # Multicollinearity testing
 vif_selector = VIFSelector(vif_threshold=10)
 
-# Feature Stabality testing
+# Feature Stability testing (tree-based)
 boost_selector = BoostingTreeSelector(select_frac=0.9)
+
+# Stability selection (NEW in v0.3.1)
+# Identifies features consistently selected across multiple subsamples
+stability_selector = StabilitySelector(
+    n_iterations=100,      # Number of subsampling iterations
+    sample_fraction=0.75,  # Fraction of data to sample
+    threshold=0.6,         # Minimum selection frequency (0-1)
+    select_frac=0.5,       # Fraction of top features per iteration
+    random_state=42
+)
 
 # Combined usage
 pipeline = Pipeline([
@@ -175,6 +239,7 @@ pipeline = Pipeline([
     ('corr', corr_selector),
     ('vif', vif_selector),
     ('boost', boost_selector),
+    ('stability', stability_selector),
 ])
 ```
 
@@ -331,6 +396,7 @@ print(performance['feature_selection'])
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
+from optimus.imputer import Imputer
 from optimus.encoder import Encoder
 from optimus.feature_selection import IVSelector, PSISelector, CorrSelector
 from optimus.estimator import Benchmark
@@ -349,6 +415,17 @@ X_train, X_test, y_train, y_test = train_test_split(
 
 # 3. Feature engineering pipeline
 preprocessing_pipeline = Pipeline([
+    # Missing value imputation (NEW in v0.3.1)
+    ('imputer', Imputer(
+        impute_strategy={
+            'age': 'median',
+            'income': 'mean',
+            'education': 'mode',
+            'employment_length': 'median'
+        },
+        missing_values=[-999, '__N.A__']
+    )),
+
     # WOE encoding
     ('encoder', Encoder(spec={
         'age': 'bestKS',
@@ -356,7 +433,7 @@ preprocessing_pipeline = Pipeline([
         'education': 'woeMerge',
         'employment_length': 'optimal'
     })),
-    
+
     # Feature selection
     ('feature_selection', Pipeline([
         ('iv', IVSelector(iv_threshold=0.02)),
@@ -445,7 +522,30 @@ model_tuner = model_builder.build_model()
 
 ## Release Notes
 
-### v0.3.0 (Current Version)
+### v0.3.1 (Current Version)
+- **New Feature - Imputer Class**: Introduced comprehensive `Imputer` class for missing value imputation with feature-level strategy control
+  - Support for multiple imputation strategies: mean, median, min, max, mode, and separate
+  - Flexible missing value identification with customizable missing value markers
+  - Feature-level granular control for different imputation approaches
+- **New Feature - StabilitySelector**: Advanced feature selection using stability selection methodology
+  - Identifies features consistently selected across multiple data subsamples
+  - Reduces risk of selecting spurious features and improves model generalization
+  - Configurable iteration count, sampling fraction, and selection threshold
+  - Based on bootstrap aggregating (bagging) with LightGBM as base estimator
+- **Enhanced Encoder Robustness**: Fixed critical bugs in the encoder module
+  - Fixed unknown missing value handling in transform stage
+  - Fixed mixed type bugs when using strategy `False`
+  - Fixed categorical missing data type conversion issues
+- **Improved Binning Stability**: Enhanced binning algorithms reliability
+  - Fixed WOEMerge categorical feature handling bug
+  - Fixed categorical unique value binning edge cases
+- **Module Refactoring and Enhancement**: Comprehensive code quality improvements across core modules
+  - Enhanced calibrator module with better error handling and validation
+  - Improved feature_selection module with additional robustness checks
+  - Optimized pipeliner, reporter, and trainer modules for better performance
+  - Updated documentation and type hints throughout the codebase
+
+### v0.3.0
 - **Enhanced Training Pipeline**: Introduced comprehensive `Train` class for end-to-end model training
 - **Improved Pipeline Architecture**: Added advanced `Preprocess` and `Model` classes for streamlined workflows
 - **Advanced Feature Selection**: Enhanced feature selection with VIF bug fixes and improved stability checks

@@ -151,11 +151,17 @@ class Imputer(BaseEstimator, TransformerMixin):
             # Mode works for both numerical and categorical
             mode_values = X.mode()
             if len(mode_values) == 0:
-                cprint(
-                    f"[WARN] No mode found, using first value as fallback",
-                    "yellow",
-                )
-                return X.iloc[0] if len(X) > 0 else None
+                if len(X) > 0:
+                    cprint(
+                        f"[WARN] No mode found, using first value as fallback",
+                        "yellow",
+                    )
+                    return X.iloc[0]
+                else:
+                    raise ValueError(
+                        "Cannot compute mode for empty feature after removing missing values. "
+                        "All values are missing for this feature."
+                    )
             return mode_values[0]
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "Imputer":

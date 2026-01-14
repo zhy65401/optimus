@@ -109,6 +109,10 @@ class Calibration(TransformerMixin):
                 raise ValueError(
                     "score_cap and score_floor are required when mapping_base is provided."
                 )
+            if score_floor >= score_cap:
+                raise ValueError(
+                    f"score_floor ({score_floor}) must be less than score_cap ({score_cap})."
+                )
         else:
             self.score_floor = 0
             self.score_cap = 1
@@ -193,9 +197,34 @@ class Calibration(TransformerMixin):
             "lnodds_bad_rate_y",
         ]
         self.calibrate_detail = df_cal[lst_col]
-        self.calibrate_coef = np.polyfit(
-            df_cal["lnodds_prob_mean_x"], df_cal["lnodds_bad_rate_y"], self.n_degree
-        )
+
+        # Fit polynomial with error handling
+        try:
+            self.calibrate_coef = np.polyfit(
+                df_cal["lnodds_prob_mean_x"],
+                df_cal["lnodds_bad_rate_y"],
+                self.n_degree,
+            )
+        except (np.linalg.LinAlgError, ValueError) as e:
+            logging.warning(
+                f"Polynomial fitting failed with degree {self.n_degree}: {e}. "
+                "Falling back to linear calibration (degree=1)."
+            )
+            try:
+                self.calibrate_coef = np.polyfit(
+                    df_cal["lnodds_prob_mean_x"],
+                    df_cal["lnodds_bad_rate_y"],
+                    1,  # Fallback to linear
+                )
+                self.n_degree = 1  # Update degree to reflect actual fit
+            except (np.linalg.LinAlgError, ValueError) as e2:
+                logging.error(
+                    f"Linear fitting also failed: {e2}. "
+                    "Using identity calibration (no adjustment)."
+                )
+                # Identity calibration: y = x (coefficients [1, 0])
+                self.calibrate_coef = np.array([1.0, 0.0])
+                self.n_degree = 1
 
         # Generate and store calibration plot (always generate regardless of mode)
         # Use probability outputs for the plot even in score mapping mode
