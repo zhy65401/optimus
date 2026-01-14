@@ -55,6 +55,7 @@ class Train:
         self,
         model_path: Optional[str] = None,
         report_path: Optional[str] = None,
+        spec: Optional[Dict[str, Union[str, List[float]]]] = None,
         model_type: str = "LR",
         missing_values: Optional[List[str]] = None,
         impute_strategy: Optional[Dict[str, str]] = None,
@@ -75,6 +76,18 @@ class Train:
         Args:
             model_path: Directory path for saving model artifacts
             report_path: Directory path for saving model reports
+            spec: Dictionary mapping feature names to binning strategies.
+                If None (default), uses 'auto' for all features.
+                Strategies can be:
+                - 'auto': Automatically choose best strategy
+                - 'qcut': Equal frequency binning
+                - 'chiMerge': Chi-square based binning
+                - 'bestKS': KS statistic based binning
+                - 'woeMerge': WOE based categorical merging
+                - 'optimal': Optimal binning using OptimalBinning
+                - 'simple': Simple binning
+                - List[float]: Custom bin edges
+                - False: No binning (use original categories)
             model_type: Type of model to train. Options:
                 - 'LR': Logistic Regression
                 - 'XGB': XGBoost
@@ -105,9 +118,18 @@ class Train:
             >>> # Simple initialization
             >>> trainer = Train(model_path='./models')
 
+            >>> # With custom binning specification
+            >>> spec = {
+            ...     'age': 'bestKS',
+            ...     'income': [0, 30000, 60000, 100000, float('inf')],
+            ...     'education': False
+            ... }
+            >>> trainer = Train(model_path='./models', spec=spec)
+
             >>> # Advanced initialization with custom parameters
             >>> trainer = Train(
             ...     model_path='./models',
+            ...     spec=spec,
             ...     model_type='XGB',
             ...     tune_method='BO',
             ...     max_evals=150,
@@ -119,6 +141,7 @@ class Train:
         self.version = version
         self.model_path = model_path
         self.report_path = report_path
+        self.spec = spec
         self.missing_values = missing_values or _DefaultParams.missing_values.value
         self.impute_strategy = impute_strategy
         self.labeled_sample_type = ["train", "test"] + (labeled_sample_type or [])
@@ -241,7 +264,11 @@ class Train:
         testy = y[test_mask]
 
         # Build feature specification
-        spec = {col: "auto" for col in X.columns}
+        # Use custom spec if provided, otherwise default to 'auto' for all features
+        if self.spec is not None:
+            spec = self.spec
+        else:
+            spec = {col: "auto" for col in X.columns}
 
         # Initialize and fit preprocessor with new API
         preprocessor = Preprocess(
