@@ -354,7 +354,7 @@ class Reporter:
             worksheet: The openpyxl worksheet containing score PSI analysis.
         """
         perc_cols = ["B"]
-        Reporter._set_col_format(worksheet, perc_cols, "0.00")
+        Reporter._set_col_format(worksheet, perc_cols, "0.00%")
         w15 = ["B"]
         Reporter._set_col_width(worksheet, w15, 15)
         w20 = ["A"]
