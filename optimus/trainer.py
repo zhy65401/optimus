@@ -62,10 +62,12 @@ class Train:
         tune_method: str = "BO",
         n_bins: int = 25,
         n_degree: int = 1,
+        calibration_method: str = "polynomial",
         max_evals: int = 100,
         mapping_base: Optional[Dict[int, float]] = None,
         score_cap: Optional[float] = None,
         score_floor: Optional[float] = None,
+        high_score_threshold: Optional[float] = None,
         version: str = "",
         labeled_sample_type: Optional[List[str]] = None,
         **kwargs: Any,
@@ -100,13 +102,18 @@ class Train:
                 - 'BO': Bayesian Optimization
                 - 'GS': Grid Search
             n_bins: Number of bins for score calibration
-            n_degree: Degree for polynomial features in calibration
+            n_degree: Degree for polynomial features in calibration (only for polynomial method)
+            calibration_method: Calibration method to use. Options:
+                - 'polynomial': Polynomial fitting in log-odds space (default)
+                - 'isotonic': Isotonic regression in probability space
             max_evals: Maximum evaluations for hyperparameter tuning
             mapping_base: Custom score mapping dictionary. If provided, transforms
                 probabilities to credit scores. If None (default), outputs calibrated
                 probabilities directly.
-            score_cap: Maximum score value (required when mapping_base is provided)
-            score_floor: Minimum score value (required when mapping_base is provided)
+            score_cap: Maximum score value (required when mapping_base is provided, or for isotonic auto-mapping)
+            score_floor: Minimum score value (required when mapping_base is provided, or for isotonic auto-mapping)
+            high_score_threshold: High-risk threshold for isotonic auto-mapping (0-1 range).
+                Only applies when calibration_method='isotonic' and score_cap/score_floor provided without mapping_base.
             version: Version identifier for the model
             labeled_sample_type: List of sample types to include in training
             **kwargs: Additional parameters passed to preprocessing and modeling
@@ -151,20 +158,11 @@ class Train:
         self.max_evals = max_evals
         self.n_bins = n_bins
         self.n_degree = n_degree
-        # Default Mapping Base:
-        # {
-        #     500: 0.128,
-        #     550: 0.0671,
-        #     600: 0.0341,
-        #     650: 0.017,
-        #     700: 0.0084,
-        #     750: 0.0041,
-        #     800: 0.002,
-        #     850: 0.001
-        # }
+        self.calibration_method = calibration_method
         self.mapping_base = mapping_base
         self.score_cap = score_cap
         self.score_floor = score_floor
+        self.high_score_threshold = high_score_threshold
 
         # Preprocessing arguments
         self.corr_threshold = kwargs.get(
@@ -309,9 +307,11 @@ class Train:
         calibrator = Calibration(
             n_bins=self.n_bins,
             n_degree=self.n_degree,
+            calibration_method=self.calibration_method,
             mapping_base=self.mapping_base,
             score_cap=self.score_cap,
             score_floor=self.score_floor,
+            high_score_threshold=self.high_score_threshold,
         )
         calibrator = calibrator.fit(train_proba, trainy)
         fitting_set = {
@@ -686,9 +686,11 @@ class Train:
         calibrator = Calibration(
             n_bins=self.n_bins,
             n_degree=self.n_degree,
+            calibration_method=self.calibration_method,
             mapping_base=self.mapping_base,
             score_cap=self.score_cap,
             score_floor=self.score_floor,
+            high_score_threshold=self.high_score_threshold,
         )
         calibrator = calibrator.fit(train_proba, trainy)
 

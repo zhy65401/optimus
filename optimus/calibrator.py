@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.3.0
+# Version: 0.4.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import TransformerMixin
 from sklearn.calibration import CalibrationDisplay
+from sklearn.isotonic import IsotonicRegression
 
 
 class Calibration(TransformerMixin):
@@ -70,41 +71,56 @@ class Calibration(TransformerMixin):
         self,
         n_bins: int = 25,
         n_degree: int = 1,
+        calibration_method: str = "polynomial",
         mapping_base: Optional[Dict[int, float]] = None,
         score_cap: Optional[float] = None,
         score_floor: Optional[float] = None,
+        high_score_threshold: Optional[float] = None,
     ) -> None:
         """
         Initialize the Calibration transformer.
 
         Args:
             n_bins: Number of bins for calibration analysis and probability binning.
-            n_degree: Polynomial degree for probability calibration curve fitting.
+            n_degree: Polynomial degree for probability calibration curve fitting
+                (only used when calibration_method='polynomial').
+            calibration_method: Calibration method to use. Options:
+                - 'polynomial': Polynomial fitting in log-odds space (default)
+                - 'isotonic': Isotonic regression in probability space
             mapping_base: Custom score-to-probability mapping. If provided, transforms
-                probabilities to credit scores. If None (default), outputs calibrated
-                probabilities directly. Format: {score: probability}, e.g., {600: 0.05}.
-            score_cap: Maximum score value (required when mapping_base is provided).
-            score_floor: Minimum score value (required when mapping_base is provided).
+                probabilities to credit scores. Format: {score: probability}, e.g., {600: 0.05}.
+            score_cap: Maximum score value. If mapping_base provided, required. For isotonic
+                auto-mapping, triggers auto-generation (default: 100).
+            score_floor: Minimum score value (default: 0).
+            high_score_threshold: High-risk threshold for auto-mapping (isotonic only, range: 0-1).
+                Only applies when mapping_base=None and score_cap is provided.
+                - None: uniform stretch to [score_floor, score_cap]
+                - 0.7: high quantiles (P70-P100) stretched to [70, 100]
 
         Examples:
-            >>> # Probability calibration (default)
+            >>> # Probability calibration with polynomial (default)
             >>> calibrator = Calibration()
 
-            >>> # Custom score mapping
+            >>> # Isotonic calibration with score mapping
             >>> calibrator = Calibration(
+            ...     calibration_method='isotonic',
             ...     mapping_base={500: 0.1, 600: 0.05, 700: 0.02},
             ...     score_cap=800,
             ...     score_floor=400
             ... )
         """
         self.mapping_base = mapping_base
-        self.score_cap = score_cap
-        self.score_floor = score_floor
         self.n_bins = n_bins
         self.n_degree = n_degree
-        self._use_score_mapping = mapping_base is not None
+        self.calibration_method = calibration_method
+        self.high_score_threshold = high_score_threshold
 
-        if self._use_score_mapping:
+        if calibration_method not in ["polynomial", "isotonic"]:
+            raise ValueError(
+                f"calibration_method must be 'polynomial' or 'isotonic', got '{calibration_method}'"
+            )
+
+        if mapping_base is not None:
             if score_cap is None or score_floor is None:
                 raise ValueError(
                     "score_cap and score_floor are required when mapping_base is provided."
@@ -113,17 +129,55 @@ class Calibration(TransformerMixin):
                 raise ValueError(
                     f"score_floor ({score_floor}) must be less than score_cap ({score_cap})."
                 )
-        else:
-            self.score_floor = 0
-            self.score_cap = 1
 
-        # Results and fitted parameters
+            self._use_score_mapping = True
+            self._auto_mapping = False
+            self.score_cap = score_cap
+            self.score_floor = score_floor
+
+        elif calibration_method == "isotonic" and (
+            score_cap is not None or score_floor is not None
+        ):
+            if score_cap is None or score_floor is None:
+                raise ValueError(
+                    "For isotonic auto-mapping, both score_cap and score_floor must be provided together."
+                )
+            if score_floor >= score_cap:
+                raise ValueError(
+                    f"score_floor ({score_floor}) must be less than score_cap ({score_cap})."
+                )
+
+            self._use_score_mapping = True
+            self._auto_mapping = True
+            self.score_cap = score_cap
+            self.score_floor = score_floor
+
+        else:
+            self._use_score_mapping = False
+            self._auto_mapping = False
+            self.score_cap = 1
+            self.score_floor = 0
+
+        if high_score_threshold is not None:
+            if calibration_method != "isotonic":
+                raise ValueError(
+                    "high_score_threshold is only supported for calibration_method='isotonic'"
+                )
+            if not (0 < high_score_threshold < 1):
+                raise ValueError(
+                    f"high_score_threshold must be between 0 and 1, got {high_score_threshold}"
+                )
+            if not self._auto_mapping:
+                logging.warning(
+                    "high_score_threshold is specified but auto-mapping is not enabled. "
+                    "It will be ignored unless score_cap is provided without mapping_base."
+                )
+
         self.calibrate_detail: Optional[pd.DataFrame] = None
         self.calibrate_coef: Optional[np.ndarray] = None
+        self.iso_model: Optional[Any] = None
         self.mapping_intercept: Optional[float] = None
         self.mapping_slope: Optional[float] = None
-
-        # Calibration plot figure (generated during fit)
         self.calibrate_plot: Optional[plt.Figure] = None
 
     def fit(
@@ -149,90 +203,146 @@ class Calibration(TransformerMixin):
             >>> calibrator.fit(y_prob_train, y_true_train)
             >>> print("Calibration fitted successfully")
         """
-        if self.mapping_base is not None:
-            # Score mapping mode: use provided mapping_base
-            self._use_score_mapping = True
-            logging.info(
-                "Score mapping mode: using provided mapping_base, score_cap, and score_floor"
-            )
-            self.mapping_slope, self.mapping_intercept = self.__set_mapping_base(
-                self.mapping_base
-            )
-        else:
-            # Probability mode: output calibrated probabilities directly
-            self._use_score_mapping = False
-            logging.info("Probability mode: output calibrated probabilities directly")
-
         lst_prob = self.__check_type(df_prob)
         lst_label = self.__check_type(df_label)
 
-        df_data = pd.DataFrame(
-            {
-                "yprob": lst_prob,
-                "label": lst_label,
-                "lnodds_prob": [self.prob2lnodds(x) for x in lst_prob],
-            }
-        )
-        df_data["lnodds_prob_bin"] = pd.qcut(
-            df_data["lnodds_prob"], self.n_bins, duplicates="drop"
-        )
-
-        df_cal = df_data.groupby("lnodds_prob_bin").agg(
-            total=("label", "count"),
-            bad_rate=("label", "mean"),
-            lnodds_prob_mean_x=("lnodds_prob", "mean"),
-        )
-        df_cal["adj_bad_rate"] = df_cal.apply(
-            lambda x: max(x["bad_rate"], 1 / x["total"], 0.0001), axis=1
-        )
-        df_cal["lnodds_bad_rate_y"] = df_cal["adj_bad_rate"].apply(
-            lambda x: self.prob2lnodds(x)
-        )
-
-        lst_col = [
-            "total",
-            "bad_rate",
-            "adj_bad_rate",
-            "lnodds_prob_mean_x",
-            "lnodds_bad_rate_y",
-        ]
-        self.calibrate_detail = df_cal[lst_col]
-
-        # Fit polynomial with error handling
-        try:
-            self.calibrate_coef = np.polyfit(
-                df_cal["lnodds_prob_mean_x"],
-                df_cal["lnodds_bad_rate_y"],
-                self.n_degree,
+        # Auto-generate mapping for isotonic if needed
+        if self._auto_mapping and self.calibration_method == "isotonic":
+            self.mapping_base = self._generate_auto_mapping(
+                lst_prob,
+                self.score_cap,
+                self.score_floor,
+                self.high_score_threshold,
+                self.n_bins,
             )
-        except (np.linalg.LinAlgError, ValueError) as e:
-            logging.warning(
-                f"Polynomial fitting failed with degree {self.n_degree}: {e}. "
-                "Falling back to linear calibration (degree=1)."
+            logging.info(
+                f"Auto-generated mapping for isotonic: "
+                f"{'uniform' if self.high_score_threshold is None else 'high-risk stretched'}"
             )
+
+        # Set mapping parameters if in score mapping mode
+        if self.mapping_base is not None:
+            self._use_score_mapping = True
+            logging.info(
+                "Score mapping mode: using mapping_base, score_cap, and score_floor"
+            )
+            self.mapping_slope, self.mapping_intercept = self._set_mapping_base(
+                self.mapping_base, self.calibration_method
+            )
+        else:
+            self._use_score_mapping = False
+            logging.info("Probability mode: output calibrated probabilities directly")
+
+        if self.calibration_method == "polynomial":
+            # Polynomial calibration: binning in log-odds space
+            df_data = pd.DataFrame(
+                {
+                    "yprob": lst_prob,
+                    "label": lst_label,
+                    "lnodds_prob": [self.prob2lnodds(x) for x in lst_prob],
+                }
+            )
+            df_data["lnodds_prob_bin"] = pd.qcut(
+                df_data["lnodds_prob"], self.n_bins, duplicates="drop"
+            )
+
+            df_cal = df_data.groupby("lnodds_prob_bin").agg(
+                total=("label", "count"),
+                bad_rate=("label", "mean"),
+                lnodds_prob_mean_x=("lnodds_prob", "mean"),
+            )
+            df_cal["adj_bad_rate"] = df_cal.apply(
+                lambda x: max(x["bad_rate"], 1 / x["total"], 0.0001), axis=1
+            )
+            df_cal["lnodds_bad_rate_y"] = df_cal["adj_bad_rate"].apply(
+                lambda x: self.prob2lnodds(x)
+            )
+
+            lst_col = [
+                "total",
+                "bad_rate",
+                "adj_bad_rate",
+                "lnodds_prob_mean_x",
+                "lnodds_bad_rate_y",
+            ]
+            self.calibrate_detail = df_cal[lst_col]
+
+            # Fit polynomial with error handling
             try:
                 self.calibrate_coef = np.polyfit(
                     df_cal["lnodds_prob_mean_x"],
                     df_cal["lnodds_bad_rate_y"],
-                    1,  # Fallback to linear
+                    self.n_degree,
                 )
-                self.n_degree = 1  # Update degree to reflect actual fit
-            except (np.linalg.LinAlgError, ValueError) as e2:
-                logging.error(
-                    f"Linear fitting also failed: {e2}. "
-                    "Using identity calibration (no adjustment)."
+            except (np.linalg.LinAlgError, ValueError) as e:
+                logging.warning(
+                    f"Polynomial fitting failed with degree {self.n_degree}: {e}. "
+                    "Falling back to linear calibration (degree=1)."
                 )
-                # Identity calibration: y = x (coefficients [1, 0])
-                self.calibrate_coef = np.array([1.0, 0.0])
-                self.n_degree = 1
+                try:
+                    self.calibrate_coef = np.polyfit(
+                        df_cal["lnodds_prob_mean_x"],
+                        df_cal["lnodds_bad_rate_y"],
+                        1,  # Fallback to linear
+                    )
+                    self.n_degree = 1  # Update degree to reflect actual fit
+                except (np.linalg.LinAlgError, ValueError) as e2:
+                    logging.error(
+                        f"Linear fitting also failed: {e2}. "
+                        "Using identity calibration (no adjustment)."
+                    )
+                    # Identity calibration: y = x (coefficients [1, 0])
+                    self.calibrate_coef = np.array([1.0, 0.0])
+                    self.n_degree = 1
+
+            # Generate calibrated probabilities for plot
+            lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
+            lst_lnodds_cal_prob = [
+                np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
+            ]
+            y_prob_after = np.array([self.lnodds2prob(x) for x in lst_lnodds_cal_prob])
+
+        elif self.calibration_method == "isotonic":
+            # Isotonic calibration: binning in probability space
+            df_data = pd.DataFrame(
+                {
+                    "yprob": lst_prob,
+                    "label": lst_label,
+                }
+            )
+            df_data["prob_bin"] = pd.qcut(
+                df_data["yprob"], self.n_bins, duplicates="drop"
+            )
+
+            df_cal = df_data.groupby("prob_bin").agg(
+                total=("label", "count"),
+                bad_rate=("label", "mean"),
+                prob_mean_x=("yprob", "mean"),
+            )
+            df_cal["adj_bad_rate"] = df_cal.apply(
+                lambda x: max(x["bad_rate"], 1 / x["total"], 0.0001), axis=1
+            )
+
+            lst_col = [
+                "total",
+                "bad_rate",
+                "adj_bad_rate",
+                "prob_mean_x",
+            ]
+            self.calibrate_detail = df_cal[lst_col]
+
+            # Fit isotonic regression
+            self.iso_model = IsotonicRegression(
+                y_min=0.0, y_max=1.0, increasing=True, out_of_bounds="clip"
+            )
+            self.iso_model.fit(
+                df_cal["prob_mean_x"].values, df_cal["adj_bad_rate"].values
+            )
+
+            # Generate calibrated probabilities for plot
+            y_prob_after = self.iso_model.predict(np.array(lst_prob))
 
         # Generate and store calibration plot (always generate regardless of mode)
-        # Use probability outputs for the plot even in score mapping mode
-        lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
-        lst_lnodds_cal_prob = [
-            np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
-        ]
-        y_prob_after = np.array([self.lnodds2prob(x) for x in lst_lnodds_cal_prob])
         self.calibrate_plot = self._generate_calibrate_plot(
             y_true=np.array(lst_label),
             y_prob_before=np.array(lst_prob),
@@ -261,24 +371,44 @@ class Calibration(TransformerMixin):
             >>> scores = calibrator.transform(y_prob_test)
         """
         lst_prob = self.__check_type(df_prob)
-        lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
-        lst_lnodds_cal_prob = [
-            np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
-        ]
 
-        if self._use_score_mapping:
-            # Score mapping mode: convert to credit scores
-            lst_score = [
-                self.mapping_intercept + self.mapping_slope * x
-                for x in lst_lnodds_cal_prob
+        if self.calibration_method == "polynomial":
+            # Polynomial calibration: log-odds transformation
+            lst_lnodds_prob = [self.prob2lnodds(x) for x in lst_prob]
+            lst_lnodds_cal_prob = [
+                np.poly1d(self.calibrate_coef)(x) for x in lst_lnodds_prob
             ]
-            lst_score = [max(x, self.score_floor) for x in lst_score]
-            lst_score = [min(x, self.score_cap) for x in lst_score]
-            return np.array(lst_score)
-        else:
-            # Probability mode: return calibrated probabilities
-            lst_cal_prob = [self.lnodds2prob(x) for x in lst_lnodds_cal_prob]
-            return np.array(lst_cal_prob)
+
+            if self._use_score_mapping:
+                # Score mapping mode: convert to credit scores
+                lst_score = [
+                    self.mapping_intercept + self.mapping_slope * x
+                    for x in lst_lnodds_cal_prob
+                ]
+                lst_score = [max(x, self.score_floor) for x in lst_score]
+                lst_score = [min(x, self.score_cap) for x in lst_score]
+                return np.array(lst_score)
+            else:
+                # Probability mode: return calibrated probabilities
+                lst_cal_prob = [self.lnodds2prob(x) for x in lst_lnodds_cal_prob]
+                return np.array(lst_cal_prob)
+
+        elif self.calibration_method == "isotonic":
+            # Isotonic calibration: direct probability prediction
+            cal_prob = self.iso_model.predict(np.array(lst_prob))
+
+            if self._use_score_mapping:
+                # Score mapping mode: linear mapping from calibrated probability to score
+                # Need to convert probability to score using mapping_base
+                lst_score = [
+                    self.mapping_intercept + self.mapping_slope * p for p in cal_prob
+                ]
+                lst_score = [max(x, self.score_floor) for x in lst_score]
+                lst_score = [min(x, self.score_cap) for x in lst_score]
+                return np.array(lst_score)
+            else:
+                # Probability mode: return calibrated probabilities
+                return cal_prob
 
     def compare_calibrate_result(self, df_score, df_label, bins=None):
         """
@@ -469,27 +599,8 @@ class Calibration(TransformerMixin):
         strategy: str = "uniform",
         title: str = "Calibration Curve (Before vs After)",
     ) -> plt.Figure:
-        """
-        Generate a calibration plot showing before and after calibration curves.
-
-        Uses sklearn's CalibrationDisplay to plot calibration curves. The plot shows
-        two curves: one for the original predictions (blue) and one for the calibrated
-        predictions (orange), along with the perfect calibration diagonal.
-
-        Args:
-            y_true: True binary labels.
-            y_prob_before: Predicted probabilities before calibration.
-            y_prob_after: Predicted probabilities after calibration.
-            n_bins: Number of bins for the calibration curve (default: 10).
-            strategy: Strategy for binning - 'uniform' or 'quantile' (default: 'uniform').
-            title: Title for the plot (default: 'Calibration Curve (Before vs After)').
-
-        Returns:
-            matplotlib.figure.Figure: The calibration plot figure.
-        """
         fig, ax = plt.subplots(figsize=(8, 6))
 
-        # Plot before calibration curve (blue)
         CalibrationDisplay.from_predictions(
             y_true,
             y_prob_before,
@@ -500,7 +611,6 @@ class Calibration(TransformerMixin):
             color="blue",
         )
 
-        # Plot after calibration curve (orange)
         CalibrationDisplay.from_predictions(
             y_true,
             y_prob_after,
@@ -519,56 +629,69 @@ class Calibration(TransformerMixin):
         return fig
 
     def get_calibrate_plot(self) -> Optional[plt.Figure]:
-        """
-        Get the calibration plot figure generated during fit().
-
-        Returns the stored calibration plot showing before and after calibration curves.
-        This plot is automatically generated during fit() for all calibration modes.
-
-        Returns:
-            matplotlib.figure.Figure: The calibration plot figure, or None if fit() not called.
-
-        Example:
-            >>> calibrator = Calibration()
-            >>> calibrator.fit(y_prob_train, y_train)
-            >>> fig = calibrator.get_calibrate_plot()
-            >>> fig.savefig('calibration.png')
-        """
         return self.calibrate_plot
 
     def get_lnodds_calibrate_plot(self) -> plt.Axes:
-        """
-        Plot the log-odds calibration result (legacy method).
-
-        The x-axis is the ln(odds(y_hat)) and the y-axis is the bad rate.
-        Ideally, the points should be close to the fitted line.
-
-        Returns:
-            matplotlib.axes.Axes: The plot axes.
-        """
-        x = self.calibrate_detail["lnodds_prob_mean_x"]
-        y_actual = self.calibrate_detail["lnodds_bad_rate_y"]
-
-        y_pred = np.poly1d(self.calibrate_coef)(x)
         f, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(x, y_actual, "o", x, y_pred, "-", label="1d")
-        ax.set_xlabel("lnodds_prob_mean"), ax.set_ylabel("lnodds_bad_rate")
+
+        if self.calibration_method == "polynomial":
+            x = self.calibrate_detail["lnodds_prob_mean_x"]
+            y_actual = self.calibrate_detail["lnodds_bad_rate_y"]
+            y_pred = np.poly1d(self.calibrate_coef)(x)
+
+            ax.plot(x, y_actual, "o", label="Observed", markersize=6)
+            ax.plot(x, y_pred, "-", label="Polynomial Fit", linewidth=2)
+            ax.set_xlabel("Log-Odds(Predicted Prob)", fontsize=11)
+            ax.set_ylabel("Log-Odds(Observed Rate)", fontsize=11)
+            ax.set_title(
+                "Polynomial Calibration (Log-Odds Space)",
+                fontsize=12,
+                fontweight="bold",
+            )
+
+        elif self.calibration_method == "isotonic":
+            x = self.calibrate_detail["prob_mean_x"]
+            y_actual = self.calibrate_detail["adj_bad_rate"]
+            y_pred = self.iso_model.predict(x.values)
+
+            ax.plot(x, y_actual, "o", label="Observed", markersize=6)
+            ax.plot(x, y_pred, "-", label="Isotonic Fit", linewidth=2)
+            ax.plot([0, 1], [0, 1], "k--", alpha=0.3, label="Perfect Calibration")
+            ax.set_xlabel("Mean Predicted Probability", fontsize=11)
+            ax.set_ylabel("Observed Rate", fontsize=11)
+            ax.set_title(
+                "Isotonic Calibration (Probability Space)",
+                fontsize=12,
+                fontweight="bold",
+            )
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+
+        ax.legend(loc="best")
+        ax.grid(True, alpha=0.3)
         return ax
 
     @classmethod
-    def __set_mapping_base(cls, dict_base):
-        # Linear regression for mapping base
-        # Sort by score, keeping score-bad_rate pairs together
+    def _set_mapping_base(
+        cls, dict_base: Dict[int, float], calibration_method: str
+    ) -> Tuple[float, float]:
         items = sorted(dict_base.items(), key=lambda x: x[0])
         lst_score = [item[0] for item in items]
         lst_bad_rate = [item[1] for item in items]
-        lst_lnodds_bad_rate = [cls.prob2lnodds(x) for x in lst_bad_rate]
 
         score_max, score_min = lst_score[-1], lst_score[0]
-        lnodds_max, lnodds_min = lst_lnodds_bad_rate[-1], lst_lnodds_bad_rate[0]
 
-        slope = (score_max - score_min) / (lnodds_max - lnodds_min)
-        intercept = score_max - slope * lnodds_max
+        if calibration_method == "polynomial":
+            lst_lnodds_bad_rate = [cls.prob2lnodds(x) for x in lst_bad_rate]
+            lnodds_max, lnodds_min = lst_lnodds_bad_rate[-1], lst_lnodds_bad_rate[0]
+            slope = (score_max - score_min) / (lnodds_max - lnodds_min)
+            intercept = score_max - slope * lnodds_max
+
+        elif calibration_method == "isotonic":
+            prob_max, prob_min = lst_bad_rate[-1], lst_bad_rate[0]
+            slope = (score_max - score_min) / (prob_max - prob_min)
+            intercept = score_max - slope * prob_max
+
         return slope, intercept
 
     @classmethod
@@ -595,3 +718,50 @@ class Calibration(TransformerMixin):
     def lnodds2prob(cls, lnodds):
         prob = 1 - 1 / (np.exp(lnodds) + 1)
         return prob
+
+    @classmethod
+    def _generate_auto_mapping(
+        cls,
+        prob_data: List[float],
+        score_cap: float,
+        score_floor: float,
+        high_score_threshold: Optional[float],
+        n_bins: int,
+    ) -> Dict[int, float]:
+        prob_array = np.array(prob_data)
+        mapping = {}
+
+        if high_score_threshold is None:
+            percentiles = np.linspace(0, 1.0, n_bins + 1)
+            prob_quantiles = np.quantile(prob_array, percentiles)
+
+            for i, prob in enumerate(prob_quantiles):
+                score = score_floor + (score_cap - score_floor) * (i / n_bins)
+                mapping[int(score)] = float(prob)
+
+        else:
+            threshold_score = (
+                score_floor + (score_cap - score_floor) * high_score_threshold
+            )
+
+            n_low_bins = int(n_bins * high_score_threshold)
+            low_percentiles = np.linspace(0, high_score_threshold, n_low_bins + 1)
+            low_prob_quantiles = np.quantile(prob_array, low_percentiles)
+
+            for i, prob in enumerate(low_prob_quantiles):
+                score = score_floor + (threshold_score - score_floor) * (i / n_low_bins)
+                mapping[int(score)] = float(prob)
+
+            n_high_bins = n_bins - n_low_bins
+            high_percentiles = np.linspace(high_score_threshold, 1.0, n_high_bins + 1)
+            high_prob_quantiles = np.quantile(prob_array, high_percentiles)
+
+            for i, prob in enumerate(high_prob_quantiles):
+                if i == 0:
+                    continue
+                score = threshold_score + (score_cap - threshold_score) * (
+                    i / n_high_bins
+                )
+                mapping[int(score)] = float(prob)
+
+        return mapping

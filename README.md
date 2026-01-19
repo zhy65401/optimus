@@ -324,7 +324,7 @@ Automated professional modeling reports with SHAP analysis:
 ```python
 from optimus.reporter import Reporter
 
-# Using the new v0.3.0 structure
+# Using the new v0.4.0 structure
 reporter = Reporter('./reports')
 reporter.generate_report(performance_data)
 
@@ -352,7 +352,7 @@ Report contents include:
 
 ## Usage Examples
 
-### End-to-End Training Pipeline (v0.3.0)
+### End-to-End Training Pipeline (v0.4.0)
 
 ```python
 import pandas as pd
@@ -544,6 +544,13 @@ model_tuner = model_builder.build_model()
   - Improved feature_selection module with additional robustness checks
   - Optimized pipeliner, reporter, and trainer modules for better performance
   - Updated documentation and type hints throughout the codebase
+
+### v0.4.0
+- **Isotonic Calibration Support**: Added isotonic regression calibration method for improved calibration on skewed distributions
+- **Auto-Mapping Feature**: Automatic score mapping generation for isotonic calibration with uniform and high-risk stretching modes
+- **Enhanced Calibration API**: Support for both polynomial (log-odds) and isotonic (probability) calibration methods
+- **Trainer Integration**: Full integration of calibration methods into Train class with `calibration_method` and `high_score_threshold` parameters
+- **Improved Documentation**: Comprehensive documentation for all calibration modes and parameter combinations
 
 ### v0.3.0
 - **Enhanced Training Pipeline**: Introduced comprehensive `Train` class for end-to-end model training

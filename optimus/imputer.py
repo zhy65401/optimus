@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.3.0
+# Version: 0.4.0
 # Created: 2026-01-14
 # Last Modified: 2026-01-14
 # Author: ["Hanyuan Zhang"]
