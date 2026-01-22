@@ -12,7 +12,7 @@ This package provides comprehensive tools for:
 
 # Binning classes
 from .binner import BestKSCut, ChiMergeCut, OptimalCut, QCut, SimpleCut, WOEMerge
-from .calibrator import Calibration
+from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .encoder import Encoder
 from .estimator import Benchmark
 
@@ -43,7 +43,8 @@ __all__ = [
     "Train",
     "Encoder",
     "Imputer",
-    "Calibration",
+    "IsotonicCalibrator",
+    "PlattCalibrator",
     "Preprocess",
     "Model",
     "Benchmark",

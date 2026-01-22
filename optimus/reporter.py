@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from pandas.api.types import is_numeric_dtype
 
-from .calibrator import Calibration
+from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .metrics import Metrics
 
 
@@ -955,7 +955,7 @@ class Reporter:
     def generate_calibration_report(
         self,
         writer: pd.ExcelWriter,
-        calibrator: Calibration,
+        calibrator: Union[PlattCalibrator, IsotonicCalibrator],
         scorecard: Dict[str, pd.DataFrame],
         scoredist: Dict[str, pd.DataFrame],
     ) -> None:
@@ -1039,6 +1039,19 @@ class Reporter:
                 title="Calibration Curve (Before vs After)",
                 dpi=100,
             )
+
+        if isinstance(calibrator, IsotonicCalibrator):
+            try:
+                scaling_plot = calibrator.plot_score_vs_calibrated_prob()
+                self._insert_figure_to_excel(
+                    writer=writer,
+                    fig=scaling_plot,
+                    sheet_name="Calibration - Scaling Mapping",
+                    title="Linear Scaling: Calibrated Probability → Scaled Score",
+                    dpi=100,
+                )
+            except Exception as e:
+                print(f"[WARN] Failed to generate scaling mapping plot: {e}")
 
     def generate_report(self, performance: Dict[str, Any], **kwargs) -> None:
         """
