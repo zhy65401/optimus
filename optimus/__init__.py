@@ -39,7 +39,7 @@ from .sampler import ImbalanceSampler
 from .trainer import Train
 from .tuner import BO, GridSearch
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "Hanyuan Zhang"
 __email__ = "klesterchueng@gmail.com"
 
