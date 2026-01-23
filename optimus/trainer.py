@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from termcolor import cprint
 
-from .calibrator import Calibration
+from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .estimator import Benchmark
 from .pipeliner import Model, Preprocess, _DefaultParams
 from .reporter import Reporter
@@ -62,10 +62,12 @@ class Train:
         tune_method: str = "BO",
         n_bins: int = 25,
         n_degree: int = 1,
+        calibration_method: str = "isotonic",
         max_evals: int = 100,
         mapping_base: Optional[Dict[int, float]] = None,
         score_cap: Optional[float] = None,
         score_floor: Optional[float] = None,
+        scale_threshold: Optional[float] = None,
         version: str = "",
         labeled_sample_type: Optional[List[str]] = None,
         **kwargs: Any,
@@ -100,13 +102,18 @@ class Train:
                 - 'BO': Bayesian Optimization
                 - 'GS': Grid Search
             n_bins: Number of bins for score calibration
-            n_degree: Degree for polynomial features in calibration
+            n_degree: Degree for polynomial features in calibration (only for polynomial method)
+            calibration_method: Calibration method to use. Options:
+                - 'polynomial': Polynomial fitting in log-odds space (default)
+                - 'isotonic': Isotonic regression in probability space
             max_evals: Maximum evaluations for hyperparameter tuning
             mapping_base: Custom score mapping dictionary. If provided, transforms
                 probabilities to credit scores. If None (default), outputs calibrated
                 probabilities directly.
-            score_cap: Maximum score value (required when mapping_base is provided)
-            score_floor: Minimum score value (required when mapping_base is provided)
+            score_cap: Maximum score value (required when mapping_base is provided, or for isotonic auto-mapping)
+            score_floor: Minimum score value (required when mapping_base is provided, or for isotonic auto-mapping)
+            scale_threshold: High-risk threshold for isotonic auto-mapping (0-1 range).
+                Only applies when calibration_method='isotonic' and score_cap/score_floor provided without mapping_base.
             version: Version identifier for the model
             labeled_sample_type: List of sample types to include in training
             **kwargs: Additional parameters passed to preprocessing and modeling
@@ -151,20 +158,11 @@ class Train:
         self.max_evals = max_evals
         self.n_bins = n_bins
         self.n_degree = n_degree
-        # Default Mapping Base:
-        # {
-        #     500: 0.128,
-        #     550: 0.0671,
-        #     600: 0.0341,
-        #     650: 0.017,
-        #     700: 0.0084,
-        #     750: 0.0041,
-        #     800: 0.002,
-        #     850: 0.001
-        # }
+        self.calibration_method = calibration_method
         self.mapping_base = mapping_base
         self.score_cap = score_cap
         self.score_floor = score_floor
+        self.scale_threshold = scale_threshold
 
         # Preprocessing arguments
         self.corr_threshold = kwargs.get(
@@ -188,17 +186,12 @@ class Train:
         self.treat_missing = kwargs.get(
             "treat_missing", _DefaultParams.treat_missing.value
         )
+        self.user_model = kwargs.get("user_model", None)
+        self.user_params = kwargs.get("user_params", None)
         self.ignore_preprocessors = kwargs.get("ignore_preprocessors", [])
         self.drop_features = kwargs.get("drop_features", [])
 
-        self.score_bins = kwargs.get(
-            "score_bins",
-            (
-                [self.score_floor] + sorted(self.mapping_base.keys()) + [self.score_cap]
-                if self.mapping_base
-                else [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-            ),
-        )
+        self.score_bins = kwargs.get("score_bins")
         self.sample_types = kwargs.get("sample_types", ["train", "test"])
 
     def fit(self, X: pd.DataFrame, y: pd.Series, e: pd.DataFrame):
@@ -286,7 +279,6 @@ class Train:
             drop_features=self.drop_features,
         )
 
-        # Fit with reference data (test set) for PSI/GINI/Boosting selectors
         preprocessor.fit(trainX, trainy, X_ref=testX, y_ref=testy)
 
         train_set = preprocessor.transform(trainX)
@@ -297,23 +289,37 @@ class Train:
             tune_method=self.tune_method,
             max_evals=self.max_evals,
             param_grid=None,
-        ).build_model()
-        if self.model_type in ["LR", "XGB", "LGBM"]:
-            tuner = model_generator.fit(train_set, trainy, test_set, testy)
+        ).build_model(self.user_model)
+        if self.user_model is None:
+            if self.model_type in ["LR", "XGB", "LGBM"]:
+                tuner = model_generator.fit(train_set, trainy, test_set, testy)
+            else:
+                raise NotImplementedError(
+                    f"{self.model_type} model has not implemented yet!"
+                )
+            model = tuner.best_estimator
         else:
-            raise NotImplementedError(
-                f"{self.model_type} model has not implemented yet!"
-            )
-        model = tuner.best_estimator.fit(train_set, trainy)
+            model = model_generator.fit(train_set, trainy)
+            tuner = None
         train_proba = model.predict_proba(train_set)[:, 1]
-        calibrator = Calibration(
-            n_bins=self.n_bins,
-            n_degree=self.n_degree,
-            mapping_base=self.mapping_base,
-            score_cap=self.score_cap,
-            score_floor=self.score_floor,
-        )
+
+        if self.calibration_method == "isotonic":
+            calibrator = IsotonicCalibrator(
+                n_bins=self.n_bins,
+                score_floor=self.score_floor or 0.0,
+                score_cap=self.score_cap or 1.0,
+                scale_threshold=self.scale_threshold,
+            )
+        else:
+            calibrator = PlattCalibrator(
+                n_bins=self.n_bins,
+                n_degree=self.n_degree,
+                mapping_base=self.mapping_base,
+                score_cap=self.score_cap,
+                score_floor=self.score_floor,
+            )
         calibrator = calibrator.fit(train_proba, trainy)
+
         fitting_set = {
             "trainX": trainX,
             "trainy": trainy,
@@ -438,7 +444,7 @@ class Train:
 
             if sample_type in self.labeled_sample_type:
                 scorecards[sample_type] = calibrator.compare_calibrate_result(
-                    score, y_, self.score_bins
+                    score, y_, bins=self.score_bins
                 )
 
             e_.loc[:, "bm_proba"] = [round(i, 6) for i in bm_proba]
@@ -544,6 +550,7 @@ class Train:
             "feature_selection": fs_steps,
             "benchmark_detail": benchmark_detail,
             "tune_results": tuner.results,
+            "best_params": tuner.best_params if hasattr(tuner, "best_params") else None,
             "feature_importance": feature_importance,
             "shap_data": shap_data,
             "calibrator": calibrator,
@@ -557,60 +564,64 @@ class Train:
         joblib.dump(performance, performance_path)
         cprint(f"Performance file successfully dumped in path {model_dir}", "green")
 
-        if self.report_path:
-            if not os.path.exists(self.report_path):
-                cprint(
-                    f"[WARN] Report path {self.report_path} does not exist, creating...",
-                    "yellow",
-                )
-                os.makedirs(self.report_path, exist_ok=True)
-            Reporter(f"{self.report_path}/model_report_{self.ts}.xlsx").generate_report(
-                performance
-            )
-            cprint(
-                f"Model report successfully dumped in {self.report_path}/model_report_{self.ts}.xlsx",
-                "green",
-            )
-        else:
-            cprint("Report path not specified, skipping report generation", "yellow")
-
         return performance
 
-    def refit(
+    def write_report(
+        self,
+        performance: Optional[Dict[str, Any]] = None,
+        ts: Optional[str] = None,
+        report_path: Optional[str] = None,
+        report_name: Optional[str] = None,
+    ):
+        ts = ts or self.ts
+        if not ts:
+            raise ValueError(
+                "Timestamp must be provided either via ts parameter or from training/transform."
+            )
+
+        if performance is None:
+            model_dir = os.path.join(self.model_path, ts)
+            performance_path = os.path.join(model_dir, "performance")
+
+            if not os.path.exists(performance_path):
+                raise FileNotFoundError(
+                    f"Performance file not found at {performance_path}. "
+                    f"Please run transform() first or provide performance dictionary."
+                )
+
+            performance = joblib.load(performance_path)
+            cprint(f"[INFO] Loaded performance from {performance_path}", "cyan")
+
+        report_path = report_path or self.report_path
+        if not report_path:
+            raise ValueError(
+                "Report path must be specified either via report_path parameter "
+                "or during initialization."
+            )
+
+        if not os.path.exists(report_path):
+            cprint(
+                f"[WARN] Report path {report_path} does not exist, creating...",
+                "yellow",
+            )
+            os.makedirs(report_path, exist_ok=True)
+
+        if report_name:
+            report_file = f"{report_path}/{report_name}.xlsx"
+        else:
+            report_file = f"{report_path}/model_report_{ts}.xlsx"
+
+        Reporter(report_file).generate_report(performance)
+        cprint(f"[SUCCESS] Model report written to {report_file}", "green")
+
+        return report_file
+
+    def refit_model(
         self,
         ts: str,
         trial_index: Optional[int] = None,
         params: Optional[Dict[str, Any]] = None,
     ):
-        """
-        Refit the model with a different hyperparameter configuration from tuning results.
-
-        This method allows you to select a different model from the tuning results
-        without re-running the entire preprocessing pipeline. It loads the saved
-        preprocessor and fitting set, then trains a new model with the specified
-        hyperparameters.
-
-        Args:
-            ts (str): Timestamp of the model to refit.
-            trial_index (int, optional): Index of the trial in tuning results to use.
-                If provided, the hyperparameters from that trial will be used.
-            params (dict, optional): Custom hyperparameters to use for training.
-                If provided, this takes precedence over trial_index.
-
-        Returns:
-            Train: Self instance for method chaining.
-
-        Raises:
-            ValueError: If neither trial_index nor params is provided.
-            FileNotFoundError: If model artifacts don't exist.
-            IndexError: If trial_index is out of range.
-
-        Example:
-            >>> # After running fit() and reviewing tuning results
-            >>> trainer.refit(ts='20241201_143022', trial_index=5)
-            >>> # Or with custom parameters
-            >>> trainer.refit(ts='20241201_143022', params={'C': 0.5})
-        """
         if trial_index is None and params is None:
             raise ValueError("Either trial_index or params must be provided.")
 
@@ -683,13 +694,23 @@ class Train:
 
         # Generate new calibrator
         train_proba = model.predict_proba(train_set)[:, 1]
-        calibrator = Calibration(
-            n_bins=self.n_bins,
-            n_degree=self.n_degree,
-            mapping_base=self.mapping_base,
-            score_cap=self.score_cap,
-            score_floor=self.score_floor,
-        )
+
+        # Select calibrator based on calibration_method
+        if self.calibration_method == "isotonic":
+            calibrator = IsotonicCalibrator(
+                n_bins=self.n_bins,
+                score_floor=self.score_floor if self.score_floor is not None else 0.0,
+                score_cap=self.score_cap if self.score_cap is not None else 1.0,
+                scale_threshold=self.scale_threshold,
+            )
+        else:  # polynomial (Platt scaling)
+            calibrator = PlattCalibrator(
+                n_bins=self.n_bins,
+                n_degree=self.n_degree,
+                mapping_base=self.mapping_base,
+                score_cap=self.score_cap,
+                score_floor=self.score_floor,
+            )
         calibrator = calibrator.fit(train_proba, trainy)
 
         # Update saved artifacts with new model and calibrator
@@ -717,5 +738,157 @@ class Train:
         self.ts = new_ts
         cprint(f"[SUCCESS] Refitted model saved in path {new_model_dir}", "green")
         cprint(f"[INFO] Use ts='{new_ts}' for transform()", "cyan")
+
+        return self
+
+    def refit_calibrator(
+        self,
+        ts: str,
+        calibration_method: Optional[str] = None,
+        n_bins: Optional[int] = None,
+        n_degree: Optional[int] = None,
+        mapping_base: Optional[Dict[int, float]] = None,
+        score_cap: Optional[float] = None,
+        score_floor: Optional[float] = None,
+        scale_threshold: Optional[float] = None,
+    ):
+        self.ts = ts
+        model_dir = os.path.join(self.model_path, self.ts)
+
+        if not os.path.exists(model_dir):
+            raise FileNotFoundError(f"Model directory {model_dir} does not exist.")
+
+        fitting_set = joblib.load(os.path.join(model_dir, "fitting_set"))
+        preprocessor = joblib.load(os.path.join(model_dir, "preprocessor"))
+        model = joblib.load(os.path.join(model_dir, "model"))
+
+        performance_path = os.path.join(model_dir, "performance")
+        if os.path.exists(performance_path):
+            performance = joblib.load(performance_path)
+            sample_set = performance.get("sample_set", {})
+        else:
+            cprint(
+                "[WARN] No existing performance file found. Will only update calibrator.",
+                "yellow",
+            )
+            sample_set = {}
+
+        trainX = fitting_set["trainX"]
+        trainy = fitting_set["trainy"]
+
+        calibration_method = calibration_method or self.calibration_method
+        n_bins = n_bins if n_bins is not None else self.n_bins
+        n_degree = n_degree if n_degree is not None else self.n_degree
+        mapping_base = mapping_base if mapping_base is not None else self.mapping_base
+        score_cap = score_cap if score_cap is not None else self.score_cap
+        score_floor = score_floor if score_floor is not None else self.score_floor
+        scale_threshold = (
+            scale_threshold if scale_threshold is not None else self.scale_threshold
+        )
+
+        cprint(
+            f"[INFO] Refitting calibrator with method='{calibration_method}', "
+            f"n_bins={n_bins}, n_degree={n_degree}",
+            "cyan",
+        )
+
+        train_set = preprocessor.transform(trainX)
+        train_proba = model.predict_proba(train_set)[:, 1]
+
+        if calibration_method == "isotonic":
+            calibrator = IsotonicCalibrator(
+                n_bins=n_bins,
+                score_floor=score_floor if score_floor is not None else 0.0,
+                score_cap=score_cap if score_cap is not None else 1.0,
+                scale_threshold=scale_threshold,
+            )
+        else:
+            calibrator = PlattCalibrator(
+                n_bins=n_bins,
+                n_degree=n_degree,
+                mapping_base=mapping_base,
+                score_cap=score_cap,
+                score_floor=score_floor,
+            )
+
+        calibrator = calibrator.fit(train_proba, trainy)
+        cprint("[SUCCESS] Calibrator refitted successfully", "green")
+
+        if sample_set:
+            cprint("[INFO] Updating performance metrics...", "cyan")
+
+            scorecards = {}
+            df_distribution = []
+            sample_types = list(sample_set.keys())
+
+            for sample_type in sample_types:
+                X_ = sample_set[sample_type]["X"]
+                y_ = sample_set[sample_type]["y"]
+                e_ = sample_set[sample_type]["e"].copy()
+
+                transX = preprocessor.transform(X_)
+                proba = model.predict_proba(transX)[:, 1]
+                score = calibrator.transform(proba)
+
+                if sample_type in self.labeled_sample_type:
+                    scorecards[sample_type] = calibrator.compare_calibrate_result(
+                        score, y_, bins=self.score_bins
+                    )
+
+                e_.loc[:, "score"] = [round(i, 6) for i in score]
+                e_.loc[:, "score_bin"] = pd.cut(e_["score"], bins=self.score_bins)
+
+                score_dist = (
+                    e_.groupby(["score_bin"], observed=False)
+                    .agg(
+                        total=("score", "count"),
+                        pct=("score", lambda x: len(x) / e_.shape[0]),
+                    )
+                    .sort_index()
+                )
+                score_dist.columns = pd.MultiIndex.from_tuples(
+                    [(sample_type, i) for i in ["# Score", "% Score"]]
+                )
+                df_distribution.append(score_dist)
+
+                sample_set[sample_type]["e"] = e_
+
+            df_distribution = pd.concat(df_distribution, axis=1)
+            df_psi = (
+                df_distribution.apply(
+                    lambda x: (
+                        np.sum(
+                            (x - df_distribution[("train", "% Score")])
+                            * np.log(
+                                x
+                                / (
+                                    df_distribution[("train", "% Score")]
+                                    + np.finfo(float).eps
+                                )
+                                + np.finfo(float).eps
+                            )
+                        )
+                        if x.name[1] == "% Score"
+                        else np.nan
+                    )
+                )
+                .dropna()
+                .droplevel(1)
+                .to_frame(name="% Score PSI")
+                .sort_values("% Score PSI")
+            )
+
+            performance["calibrator"] = calibrator
+            performance["scoredist"] = {"Distribution": df_distribution, "PSI": df_psi}
+            performance["scorecard"] = scorecards
+            performance["sample_set"] = sample_set
+
+            joblib.dump(performance, performance_path)
+            cprint(
+                f"[SUCCESS] Performance metrics updated in path {model_dir}", "green"
+            )
+
+        joblib.dump(calibrator, os.path.join(model_dir, "calibrator"))
+        cprint(f"[SUCCESS] Calibrator saved in path {model_dir}", "green")
 
         return self

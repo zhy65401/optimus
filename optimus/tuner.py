@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.3.0
+# Version: 0.4.0
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
@@ -80,11 +80,11 @@ class GridSearch:
         self.param_grid = param_grid
 
     def fit(self, X, y, Xtest, ytest):
-        model = Estimators[self.model_type].value
-        param_grid = self.param_grid or _DefaultGSParameterGrid[self.model].value
+        param_grid = self.param_grid or _DefaultGSParameterGrid[self.model_type].value
         lst_params = self.generate_param_grid(param_grid)
 
         for param_grid in lst_params:
+            model = Estimators[self.model_type].value
             model.set_params(**param_grid)
             cv_res = self.get_cv_results(model, X, y)
             model, train_res = self.get_results(
@@ -241,6 +241,14 @@ class BO:
         self.results = pd.concat(
             [pd.DataFrame(res) for res in self.results], axis=0
         ).reset_index(drop=True)
+
+        # Retrain the best model with best_params to ensure consistency
+        if self.best_params is not None:
+            model = Estimators[self.model_type].value
+            model.set_params(**self.best_params)
+            model.fit(X, y)
+            self.best_estimator = model
+
         return self
 
     def objective(self, params):
@@ -291,7 +299,7 @@ class BO:
             X_valid = X.iloc[idx_valid, :]
             y_valid = y.iloc[idx_valid]
 
-            model.fit(X, y)
+            model.fit(X_train, y_train)
             df_ypred_train = model.predict_proba(X_train)[:, 1]
             df_ypred_valid = model.predict_proba(X_valid)[:, 1]
 

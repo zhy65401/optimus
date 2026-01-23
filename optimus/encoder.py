@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.3.0
+# Version: 0.4.0
 # Created: 2024-04-07
 # Last Modified: 2025-08-19
 # Author: ["Hanyuan Zhang"]
@@ -419,8 +419,10 @@ class Encoder(BaseEstimator, TransformerMixin):
         """
         Ensure every feature has bins for handling missing/unexpected values.
 
-        This method ensures that at least -990000 (numerical) or __N.A__ (categorical)
-        bin exists, and all user-defined missing values are present in bin_info.
+        This method:
+        1. Ensures at least -990000 (numerical) or __N.A__ (categorical) bin exists
+        2. Ensures all user-defined missing values are present in bin_info
+        3. For numerical features, fills in WOE for bins without training samples
         Uses the global treat_missing strategy for WOE assignment.
         """
         valid_strategies = ("mean", "min", "max", "zero")
@@ -432,9 +434,7 @@ class Encoder(BaseEstimator, TransformerMixin):
 
         for feat, bins_woe in self.bin_info.items():
             # Calculate WOE values for each strategy
-            normal_woes = [
-                v for k, v in bins_woe.items() if k not in self.missing_values
-            ]
+            normal_woes = [v for k, v in bins_woe.items() if isinstance(k, pd.Interval)]
             woe_by_strategy = {
                 "mean": np.mean(normal_woes) if normal_woes else 0.0,
                 "min": np.min(normal_woes) if normal_woes else 0.0,
@@ -442,6 +442,26 @@ class Encoder(BaseEstimator, TransformerMixin):
                 "zero": 0.0,
             }
             target_woe = woe_by_strategy[self.treat_missing]
+
+            # For custom binning strategy, ensure all defined bins have WOE values
+            # even if they have no samples in training data (only needed for user-defined bins)
+            if (
+                self._bin_strategy[feat] == "custom"
+                and self._feat_types[feat] == "numerical"
+                and self._bin_array[feat]
+            ):
+                all_bins = []
+                for i in range(len(self._bin_array[feat]) - 1):
+                    interval = pd.Interval(
+                        self._bin_array[feat][i],
+                        self._bin_array[feat][i + 1],
+                        closed="right",
+                    )
+                    all_bins.append(interval)
+
+                for missing_bin in all_bins:
+                    if missing_bin not in bins_woe:
+                        self.bin_info[feat][missing_bin] = target_woe
 
             # Ensure standard missing bin exists
             if ("__N.A__" not in bins_woe) and (-990000 not in bins_woe):
@@ -586,7 +606,6 @@ class Encoder(BaseEstimator, TransformerMixin):
                 if isinstance(bin_strategy, str) or isinstance(bin_strategy, bool)
                 else "custom"
             )
-            # compute and save woe
             self.bin_info[feat] = self._get_woe(
                 binned_data, y_normal, X_missing, y_missing
             )
@@ -642,7 +661,13 @@ class Encoder(BaseEstimator, TransformerMixin):
             outX.loc[X_missing.index, feat] = X_missing
 
             if not X_normal.empty:
-                if (
+                # Check if bin_array is empty (happens when all training data was missing)
+                if not self._bin_array[feat]:
+                    missing_value = (
+                        -990000 if self._feat_types[feat] == "numerical" else "__N.A__"
+                    )
+                    outX.loc[X_normal.index, feat] = missing_value
+                elif (
                     self._bin_strategy[feat] == False
                     or self._feat_types[feat] == "categorical"
                 ):
@@ -654,6 +679,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                     binned_data = bins_categrories.map(self.bin_info[feat]).astype(
                         float
                     )
+                    outX.loc[X_normal.index, feat] = binned_data
                 elif self._feat_types[feat] == "numerical":
                     bins_categrories = pd.cut(
                         X_normal, self._bin_array[feat], include_lowest=True
@@ -661,7 +687,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                     binned_data = bins_categrories.map(self.bin_info[feat]).astype(
                         float
                     )
-                outX.loc[X_normal.index, feat] = binned_data
+                    outX.loc[X_normal.index, feat] = binned_data
             outX.loc[X_missing.index, feat] = outX.loc[X_missing.index, feat].replace(
                 self.bin_info[feat]
             )
@@ -718,7 +744,7 @@ class Encoder(BaseEstimator, TransformerMixin):
                 X_normal = X_normal.astype(str)
 
             # Get binned categories
-            if X_normal.empty:
+            if X_normal.empty or not self._bin_array[feat]:
                 bins_categories = pd.Series([], name=feat)
             elif (
                 self._bin_strategy[feat] == False
