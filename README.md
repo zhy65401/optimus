@@ -522,7 +522,37 @@ model_tuner = model_builder.build_model()
 
 ## Release Notes
 
-### v0.3.1 (Current Version)
+### v0.4.1 (Current Version)
+- **New Feature - ImbalanceSampler**: Advanced sampling techniques for handling imbalanced datasets
+  - Support for 4 sampling strategies: under-sampling, over-sampling, SMOTE, and combined
+  - Configurable target ratio for flexible class balance adjustment
+  - Particularly useful for fraud detection and rare event prediction scenarios
+- **Comprehensive Demo Script**: Added `demo.py` showcasing all major features
+  - Demonstrations for binning methods (QCut, ChiMerge, OptimalCut)
+  - Imbalanced data sampling examples with all 4 strategies
+  - Feature selection pipeline demonstrations (IV, PSI, GINI, VIF, Correlation, Boosting Tree, Stability)
+  - Model calibration examples (Platt and Isotonic calibration)
+  - End-to-end training pipeline with fraud detection dataset
+  - Metrics calculation examples (IV, GINI, KS, AUC, PSI)
+- **Enhanced Package Exports**: Added `ImbalanceSampler` to `__all__` in `__init__.py` for easier imports
+- **Documentation Updates**: Added comprehensive docstrings and usage examples for ImbalanceSampler
+- **Bug Fixes**:
+  - Fixed demo script compatibility with actual API parameter names
+  - Corrected spec format for categorical features (use 'woeMerge' instead of 'c')
+  - Added proper type conversion for boolean columns in VIF calculation
+  - Fixed PlattCalibrator mapping_base format (dict instead of int)
+  - Fixed Metrics input type requirements (pandas Series with names)
+  - Added score_bins parameter handling in Train class
+  - Fixed Reporter label column requirement in external data
+
+### v0.4.0
+- **Isotonic Calibration Support**: Added isotonic regression calibration method for improved calibration on skewed distributions
+- **Auto-Mapping Feature**: Automatic score mapping generation for isotonic calibration with uniform and high-risk stretching modes
+- **Enhanced Calibration API**: Support for both polynomial (log-odds) and isotonic (probability) calibration methods
+- **Trainer Integration**: Full integration of calibration methods into Train class with `calibration_method` and `high_score_threshold` parameters
+- **Improved Documentation**: Comprehensive documentation for all calibration modes and parameter combinations
+
+### v0.3.1
 - **New Feature - Imputer Class**: Introduced comprehensive `Imputer` class for missing value imputation with feature-level strategy control
   - Support for multiple imputation strategies: mean, median, min, max, mode, and separate
   - Flexible missing value identification with customizable missing value markers

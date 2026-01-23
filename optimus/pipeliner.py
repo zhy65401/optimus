@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 from sklearn.base import clone
+from termcolor import cprint
 
 from .encoder import Encoder
 from .estimator import Benchmark
@@ -213,14 +214,8 @@ class Preprocess:
                 ("Stability", StabilitySelector(threshold=self.stability_threshold)),
             ]
         )
-        all_steps.append(
-            (
-                "Benchmark",
-                Benchmark(
-                    positive_coef=False, remove_method="iv", pvalue_threshold=0.05
-                ),
-            )
-        )
+        # Note: Benchmark is no longer part of Preprocess pipeline
+        # It's now handled separately in Train class
         steps = [
             (name, transformer)
             for name, transformer in all_steps
@@ -268,8 +263,9 @@ class Preprocess:
 
             # Skip feature selection if no features remain
             if Xt.shape[1] == 0:
-                print(
-                    f"[WARN] No features remaining, skipping {name} and subsequent steps."
+                cprint(
+                    f"[WARN] No features remaining, skipping {name} and subsequent steps.",
+                    "yellow",
                 )
                 # Store a passthrough transformer that keeps empty state
                 fitted_transformer.selected_features = []

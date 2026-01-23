@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 from hyperopt import STATUS_OK, Trials, fmin, hp, tpe
 from sklearn.model_selection import StratifiedKFold
+from termcolor import cprint
 
 from .estimator import Estimators
 from .metrics import Metrics
@@ -96,24 +97,28 @@ class GridSearch:
             res.update(train_res)
             self.results.append(res)
 
-            print("")
-            print(
+            cprint("")
+            cprint(
                 "\t".join(
                     [
                         f"{k}: {v}"
                         for k, v in param_grid.items()
                         if "auc" not in k and "ks" not in k
                     ]
-                )
+                ),
+                "cyan",
             )
-            print(
-                f"AUC: Train: {train_res['train_auc'][0]:.2%} Test: {train_res['test_auc'][0]:.2%} OOT: {train_res['oot_auc'][0]:.2%}"
+            cprint(
+                f"AUC: Train: {train_res['train_auc'][0]:.2%} Test: {train_res['test_auc'][0]:.2%} OOT: {train_res['oot_auc'][0]:.2%}",
+                "green",
             )
-            print(
-                f"KS: Train: {train_res['train_ks'][0]:.2%} Test: {train_res['test_ks'][0]:.2%} OOT: {train_res['oot_ks'][0]:.2%}"
+            cprint(
+                f"KS: Train: {train_res['train_ks'][0]:.2%} Test: {train_res['test_ks'][0]:.2%} OOT: {train_res['oot_ks'][0]:.2%}",
+                "green",
             )
-            print(
-                "==============================================================================="
+            cprint(
+                "===============================================================================",
+                "cyan",
             )
 
             if self.best_params is None:
@@ -269,7 +274,7 @@ class BO:
         search_info.update(cv_res)
         search_info.update(train_res)
         self.results.append(search_info)
-        print(params, train_res)
+        cprint(f"{params} {train_res}", "cyan")
 
         if self.best_params is None:
             self.best_params = params

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from termcolor import cprint
 
 from .metrics import Metrics
 
@@ -161,7 +162,7 @@ class CorrSelector(BaseEstimator, TransformerMixin):
             >>> selector.fit(X_train, y_train)
             >>> print(f"Selected {len(selector.selected_features)} features")
         """
-        print("[INFO]: Processing Correlation Selector...")
+        cprint("[INFO]: Processing Correlation Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         lst_iv = [Metrics.get_iv(y, X[c]) for c in feature_list]
         df_iv = pd.DataFrame({"var": feature_list, "iv": lst_iv})
@@ -229,11 +230,13 @@ class CorrSelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -264,10 +267,11 @@ class GINISelector(BaseEstimator, TransformerMixin):
         self.user_feature_list = user_feature_list
 
     def fit(self, X, y, refX=None, refy=None):
-        print("[INFO]: Processing GINI Selector...")
+        cprint("[INFO]: Processing GINI Selector...", "cyan")
         if refX is None or refy is None:
-            print(
-                "[WARNING]: need to provide train and test data to do GINI based feature selection"
+            cprint(
+                "[WARNING]: need to provide train and test data to do GINI based feature selection",
+                "yellow",
             )
             refX = X.copy()
             refy = y.copy()
@@ -302,11 +306,13 @@ class GINISelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -344,11 +350,12 @@ class PSISelector(BaseEstimator, TransformerMixin):
         self.user_feature_list = user_feature_list
 
     def fit(self, X, y, refX=None, refy=None):
-        print("[INFO]: Processing PSI Selector...")
+        cprint("[INFO]: Processing PSI Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         if refX is None:
-            print(
-                "[WARNING]: need to provide train and test data to do PSI based feature selection"
+            cprint(
+                "[WARNING]: need to provide train and test data to do PSI based feature selection",
+                "yellow",
             )
             refX = X
         # compute PSI
@@ -378,11 +385,13 @@ class PSISelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -421,7 +430,7 @@ class IVSelector(BaseEstimator, TransformerMixin):
         self.user_feature_list = user_feature_list
 
     def fit(self, X, y, sample_idx=None):
-        print("[INFO]: Processing IV Selector...")
+        cprint("[INFO]: Processing IV Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
 
         lst_iv = [Metrics.get_iv(y, X[c]) for c in feature_list]
@@ -440,11 +449,13 @@ class IVSelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -483,7 +494,7 @@ class VIFSelector(BaseEstimator, TransformerMixin):
         self.user_feature_list = user_feature_list
 
     def fit(self, X, y, sample_idx=None):
-        print("[INFO]: Processing VIF Selector...")
+        cprint("[INFO]: Processing VIF Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
 
         # compute VIF
@@ -511,11 +522,13 @@ class VIFSelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -548,7 +561,7 @@ class BoostingTreeSelector(BaseEstimator, TransformerMixin):
         self.user_feature_list = user_feature_list
 
     def fit(self, X, y, refX=None, refy=None):
-        print("[INFO]: Processing Boosting Tree Selector...")
+        cprint("[INFO]: Processing Boosting Tree Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         if refX is None or refy is None:
             refX = X.copy()
@@ -612,11 +625,13 @@ class BoostingTreeSelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -706,7 +721,7 @@ class StabilitySelector(BaseEstimator, TransformerMixin):
             >>> selector.fit(X_train, y_train)
             >>> print(f"Selected {len(selector.selected_features)} stable features")
         """
-        print("[INFO]: Processing Stability Selector...")
+        cprint("[INFO]: Processing Stability Selector...", "cyan")
         feature_list = sorted(self.user_feature_list or X.columns.tolist())
         n_samples = len(X)
         sample_size = int(n_samples * self.sample_fraction)
@@ -801,11 +816,13 @@ class StabilitySelector(BaseEstimator, TransformerMixin):
 
     def summary(self) -> None:
         """Print summary of feature selection results."""
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -835,7 +852,7 @@ class ManualSelector(BaseEstimator, TransformerMixin):
         self.drop_features = drop_features
 
     def fit(self, X, y):
-        print("[INFO]: Processing Manual Selector...")
+        cprint("[INFO]: Processing Manual Selector...", "cyan")
         feature_list = sorted(X.columns.tolist())
         self.selected_features = feature_list
         if self.drop_features is not None:
@@ -857,9 +874,11 @@ class ManualSelector(BaseEstimator, TransformerMixin):
         return X[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )

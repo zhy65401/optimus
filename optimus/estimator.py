@@ -13,6 +13,7 @@ import statsmodels.api as sm
 import xgboost as xgb
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.linear_model import LogisticRegression
+from termcolor import cprint
 
 from .metrics import Metrics
 
@@ -59,8 +60,9 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         self.selected_features = feature_list
 
         # remove variable with inconsistent trend between woe and coefficient
-        print(
-            "[INFO] Removing inconsistent trend features between woe and coefficient..."
+        cprint(
+            "[INFO] Removing inconsistent trend features between woe and coefficient...",
+            "cyan",
         )
         coef_selector = CoefSelector(
             positive_coef=self.positive_coef, remove_method=self.remove_method
@@ -76,7 +78,7 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         # print(self.selected_features)
 
         # remove variable with insignificant p value
-        print("[INFO] Removing features with insignificant p-value...")
+        cprint("[INFO] Removing features with insignificant p-value...", "cyan")
         pvalue_selector = PValueSelector(pvalue_threshold=self.pvalue_threshold)
         pvalue_selector.fit(X[self.selected_features], y)
         self.selected_features = pvalue_selector.selected_features
@@ -114,11 +116,13 @@ class Benchmark(BaseEstimator, ClassifierMixin):
         return res
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features['by_pvalue'])} features by pvalue  {len(self.removed_features['by_coef'])} features by inconsistent coef, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features['by_pvalue'])} features by pvalue  {len(self.removed_features['by_coef'])} features by inconsistent coef, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -140,9 +144,10 @@ class Logit(BaseEstimator, ClassifierMixin):
                 method="newton", maxiter=100
             )
         except (np.linalg.LinAlgError, ValueError, RuntimeError) as e:
-            print(
+            cprint(
                 f"[WARNING]: Newton method failed ({e}), "
-                "retrying with BFGS method instead."
+                "retrying with BFGS method instead.",
+                "yellow",
             )
             self.model = sm.Logit(df_ytrain, df_xtrain_const).fit(
                 method="bfgs", maxiter=100
@@ -189,7 +194,7 @@ class Logit(BaseEstimator, ClassifierMixin):
         return res
 
     def summary(self):
-        print(self.detail)
+        cprint(str(self.detail), "cyan")
 
     def get_importance(self):
         return self.detail.drop("const", axis=0)
@@ -267,11 +272,13 @@ class CoefSelector(TransformerMixin):
         return df_xtest[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )
 
 
@@ -314,9 +321,11 @@ class PValueSelector(TransformerMixin):
         return df_xtest[self.selected_features]
 
     def summary(self):
-        print(
-            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n"
+        cprint(
+            f"\nRemoved {len(self.removed_features)} features, {len(self.selected_features)} remaining.\n",
+            "yellow",
         )
-        print(
-            "\n==============================================================================="
+        cprint(
+            "\n===============================================================================",
+            "cyan",
         )

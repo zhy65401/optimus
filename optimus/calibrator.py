@@ -291,9 +291,10 @@ class PlattCalibrator(TransformerMixin):
         Args:
             df_score: Calibrated scores from transform().
             df_label: True binary labels (0 or 1).
-            bins: Score bin boundaries. Required parameter.
+            bins: Score bin boundaries (optional).
                 - For probability mode: use bins like [0, 0.1, 0.2, ..., 1.0]
                 - For score mapping mode: use bins like [300, 400, 500, ..., 1000]
+                - If None, will create n_bins equal-frequency (quantile) bins
 
         Returns:
             pd.DataFrame: Scorecard with columns including:
@@ -304,21 +305,26 @@ class PlattCalibrator(TransformerMixin):
                 - odds_ratio, inv_odds_ratio: Odds comparison metrics
                 - ks, iv: KS statistic and Information Value
 
-        Raises:
-            ValueError: If bins not provided.
-
         Example:
+            >>> # Use automatic quantile binning
+            >>> scorecard = calibrator.compare_calibrate_result(scores, y_test)
+            >>>
+            >>> # Or provide custom bins
             >>> scorecard = calibrator.compare_calibrate_result(
             ...     scores, y_test, bins=[0, 500, 600, 700, 800, 1000]
             ... )
         """
-        if bins is None:
-            raise ValueError("bins is required for compare_calibrate_result()")
-
         lst_score = self.__check_type(df_score)
         lst_label = self.__check_type(df_label)
         df_data = pd.DataFrame({"score": lst_score, "label": lst_label})
-        df_data["score_bin"] = pd.cut(df_data["score"], bins)
+
+        if bins is None:
+            # Use n_bins to create equal-frequency (quantile) bins
+            df_data["score_bin"] = pd.qcut(
+                df_data["score"], self.n_bins, duplicates="drop"
+            )
+        else:
+            df_data["score_bin"] = pd.cut(df_data["score"], bins)
 
         eps = np.finfo(np.float32).eps
         df_res = df_data.groupby("score_bin").agg(
@@ -613,11 +619,21 @@ class IsotonicCalibrator(TransformerMixin):
        - Apply linear scaling to spread calibrated probabilities:
          * If scale_threshold is None: scale all probabilities to [0, 1]
          * If scale_threshold is set: only scale probabilities above threshold to [threshold, 1]
+           This enhances separation in the high-risk region.
        - Store slope and intercept for transform
     2. Transform:
        - Apply isotonic regression transform
        - Apply linear scaling with stored slope/intercept (segmented or full)
        - Clip results to [score_floor, score_cap]
+
+    Important Note on scale_threshold:
+        scale_threshold applies to the OUTPUT of isotonic regression, not the raw probabilities.
+        When set (e.g., 0.3), it creates a two-region calibration:
+        - Low risk region (isotonic output < 0.3): Keep isotonic values as-is
+        - High risk region (isotonic output >= 0.3): Linearly scale to [0.3, 1.0]
+
+        This is useful for enhancing discrimination in high-risk populations where
+        decision-making is more sensitive to score differences.
 
     Attributes:
         n_bins: Number of quantile bins for scorecard analysis in compare_calibrate_result().
@@ -626,8 +642,10 @@ class IsotonicCalibrator(TransformerMixin):
             divided into n_bins equal-frequency (quantile) bins to ensure no empty bins.
         score_floor: Minimum score value (for clipping).
         score_cap: Maximum score value (for clipping).
-        scale_threshold: Optional threshold for segmented scaling. If set, only probabilities
-            above this value (after isotonic regression) are linearly scaled.
+        scale_threshold: Optional threshold for segmented scaling (applied to isotonic output).
+            If set, only isotonic-calibrated probabilities above this threshold are
+            linearly scaled to enhance high-risk separation. If None, all probabilities
+            are scaled uniformly to [0, 1].
         isotonic_regressor_: Fitted IsotonicRegression model.
         mapping_slope: Slope for linear scaling after isotonic regression.
         mapping_intercept: Intercept for linear scaling after isotonic regression.

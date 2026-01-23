@@ -8,6 +8,7 @@ This package provides comprehensive tools for:
 - Model training and hyperparameter tuning
 - Model calibration and scoring
 - Automated report generation
+- Imbalanced data handling
 """
 
 # Binning classes
@@ -23,6 +24,7 @@ from .feature_selection import (
     GINISelector,
     IVSelector,
     PSISelector,
+    StabilitySelector,
     VIFSelector,
 )
 from .imputer import Imputer
@@ -31,6 +33,9 @@ from .imputer import Imputer
 from .metrics import Metrics
 from .pipeliner import Model, Preprocess
 from .reporter import Reporter
+
+# Advanced features
+from .sampler import ImbalanceSampler
 from .trainer import Train
 from .tuner import BO, GridSearch
 
@@ -56,6 +61,7 @@ __all__ = [
     "GINISelector",
     "VIFSelector",
     "BoostingTreeSelector",
+    "StabilitySelector",
     # Binning
     "QCut",
     "SimpleCut",
@@ -67,4 +73,6 @@ __all__ = [
     "Metrics",
     "GridSearch",
     "BO",
+    # Advanced
+    "ImbalanceSampler",
 ]

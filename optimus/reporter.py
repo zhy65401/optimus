@@ -12,6 +12,7 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 from pandas.api.types import is_numeric_dtype
+from termcolor import cprint
 
 from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .metrics import Metrics
@@ -1051,7 +1052,7 @@ class Reporter:
                     dpi=100,
                 )
             except Exception as e:
-                print(f"[WARN] Failed to generate scaling mapping plot: {e}")
+                cprint(f"[WARN] Failed to generate scaling mapping plot: {e}", "yellow")
 
     def generate_report(self, performance: Dict[str, Any], **kwargs) -> None:
         """
@@ -1179,4 +1180,4 @@ class Reporter:
             )
 
         writer.close()
-        print(f"[INFO] Report saved to: {self.report_file_name}")
+        cprint(f"[INFO] Report saved to: {self.report_file_name}", "green")

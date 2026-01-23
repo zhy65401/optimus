@@ -234,6 +234,7 @@ class Train:
         if "sample_type" not in e.columns:
             raise KeyError("External data must contain 'sample_type' column.")
 
+        self._artifacts = {}
         required_types = {"train", "test"}
         available_types = set(e["sample_type"].unique())
         if not required_types.issubset(available_types):
@@ -255,6 +256,12 @@ class Train:
         trainy = y[train_mask]
         testX = X[test_mask]
         testy = y[test_mask]
+        self._artifacts["fitting_set"] = {
+            "trainX": trainX,
+            "trainy": trainy,
+            "testX": testX,
+            "testy": testy,
+        }
 
         # Build feature specification
         # Use custom spec if provided, otherwise default to 'auto' for all features
@@ -283,7 +290,22 @@ class Train:
 
         train_set = preprocessor.transform(trainX)
         test_set = preprocessor.transform(testX)
+        self._artifacts["preprocessor"] = preprocessor
 
+        if train_set.shape[1] == 0 or test_set.shape[1] == 0:
+            cprint("[ERROR] No features remaining after preprocessing!", "red")
+            self.dump_artifacts()
+            return self
+
+        # Fit Benchmark model (baseline logistic regression for comparison)
+        # Note: Benchmark does NOT modify train_set, it's just a baseline model
+        benchmark = Benchmark(
+            positive_coef=False, remove_method="iv", pvalue_threshold=0.05
+        )
+        benchmark.fit(train_set, trainy)
+        self._artifacts["benchmark"] = benchmark
+
+        # Train main model on the same feature set (after preprocessing)
         model_generator = Model(
             model_type=self.model_type,
             tune_method=self.tune_method,
@@ -293,6 +315,7 @@ class Train:
         if self.user_model is None:
             if self.model_type in ["LR", "XGB", "LGBM"]:
                 tuner = model_generator.fit(train_set, trainy, test_set, testy)
+
             else:
                 raise NotImplementedError(
                     f"{self.model_type} model has not implemented yet!"
@@ -302,6 +325,8 @@ class Train:
             model = model_generator.fit(train_set, trainy)
             tuner = None
         train_proba = model.predict_proba(train_set)[:, 1]
+        self._artifacts["tuner"] = tuner
+        self._artifacts["model"] = model
 
         if self.calibration_method == "isotonic":
             calibrator = IsotonicCalibrator(
@@ -319,30 +344,8 @@ class Train:
                 score_floor=self.score_floor,
             )
         calibrator = calibrator.fit(train_proba, trainy)
-
-        fitting_set = {
-            "trainX": trainX,
-            "trainy": trainy,
-            "testX": testX,
-            "testy": testy,
-        }
-
-        # Save model artifacts
-        model_dir = os.path.join(os.path.abspath(self.model_path), self.ts)
-        os.makedirs(model_dir, exist_ok=True)
-
-        artifacts = {
-            "fitting_set": fitting_set,
-            "preprocessor": preprocessor,
-            "model": model,
-            "calibrator": calibrator,
-            "tuner": tuner,
-        }
-
-        for name, artifact in artifacts.items():
-            joblib.dump(artifact, os.path.join(model_dir, name))
-
-        cprint(f"Model files successfully dumped in path {model_dir}", "green")
+        self._artifacts["calibrator"] = calibrator
+        self.dump_artifacts()
 
         return self
 
@@ -401,21 +404,26 @@ class Train:
         if not os.path.exists(model_dir):
             raise FileNotFoundError(f"Model directory {model_dir} does not exist.")
 
-        artifacts = {}
-        artifact_names = ["preprocessor", "model", "calibrator", "tuner"]
+        if self._artifacts is None:
+            artifact_names = [
+                "preprocessor",
+                "model",
+                "calibrator",
+                "tuner",
+                "benchmark",
+            ]
+            for name in artifact_names:
+                artifact_path = os.path.join(model_dir, name)
+                if not os.path.exists(artifact_path):
+                    cprint("[ERROR] Model is not complete!", "red")
+                    return self._artifacts
+                self._artifacts[name] = joblib.load(artifact_path)
 
-        for name in artifact_names:
-            artifact_path = os.path.join(model_dir, name)
-            if not os.path.exists(artifact_path):
-                raise FileNotFoundError(
-                    f"Model artifact {artifact_path} does not exist."
-                )
-            artifacts[name] = joblib.load(artifact_path)
-
-        preprocess_pipe = artifacts["preprocessor"]
-        model = artifacts["model"]
-        calibrator = artifacts["calibrator"]
-        tuner = artifacts["tuner"]
+        preprocess_pipe = self._artifacts["preprocessor"]
+        model = self._artifacts["model"]
+        calibrator = self._artifacts["calibrator"]
+        tuner = self._artifacts["tuner"]
+        benchmark = self._artifacts["benchmark"]
 
         label = y.name
         sample_set = {}
@@ -438,7 +446,8 @@ class Train:
                     X_, y_
                 )
 
-            bm_proba = preprocess_pipe.get_step("Benchmark").predict_proba(transX)[:, 1]
+            # Use separate benchmark model (no longer part of preprocess_pipe)
+            bm_proba = benchmark.predict_proba(transX)[:, 1]
             proba = model.predict_proba(transX)[:, 1]
             score = calibrator.transform(proba)
 
@@ -451,6 +460,43 @@ class Train:
             e_.loc[:, "proba"] = [round(i, 6) for i in proba]
             e_.loc[:, "score"] = [round(i, 6) for i in score]
             e_.loc[:, "score_bin"] = pd.cut(e_["score"], bins=self.score_bins)
+
+            # Add instance-level SHAP explanations (JSON format)
+            if self.model_type in ["LR", "XGB", "LGBM"]:
+                try:
+                    import json
+
+                    import shap
+
+                    # Determine model type for SHAP
+                    if self.model_type == "LR":
+                        explainer = shap.LinearExplainer(model, transX)
+                    else:  # XGB or LGBM
+                        explainer = shap.TreeExplainer(model)
+
+                    shap_values = explainer.shap_values(transX)
+
+                    # For binary classification, shap_values might be 2D array
+                    if isinstance(shap_values, list):
+                        shap_values = shap_values[1]  # Get positive class
+
+                    # Convert SHAP values to JSON for each instance
+                    feature_names = list(transX.columns)
+                    shap_json_list = []
+                    for i in range(len(transX)):
+                        shap_dict = {
+                            feat: round(float(shap_values[i, j]), 6)
+                            for j, feat in enumerate(feature_names)
+                        }
+                        shap_json_list.append(json.dumps(shap_dict, ensure_ascii=False))
+
+                    e_.loc[:, "shap_values"] = shap_json_list
+                except Exception as ex:
+                    cprint(
+                        f"[WARN] Failed to compute SHAP values for {sample_type}: {ex}",
+                        "yellow",
+                    )
+                    e_.loc[:, "shap_values"] = None
 
             score_dist = (
                 e_.groupby(["score_bin"], observed=False)
@@ -474,12 +520,11 @@ class Train:
                     np.sum(
                         (x - df_distribution[("train", "% Score")])
                         * np.log(
-                            x
+                            (x + np.finfo(float).eps)
                             / (
                                 df_distribution[("train", "% Score")]
                                 + np.finfo(float).eps
                             )
-                            + np.finfo(float).eps
                         )
                     )
                     if x.name[1] == "% Score"
@@ -492,11 +537,12 @@ class Train:
             .sort_values("% Score PSI")
         )
 
-        benchmark_detail = preprocess_pipe.get_step("Benchmark").model_detail
+        # Benchmark is now separate from preprocess_pipe
+        benchmark_detail = benchmark.model_detail
         fs_steps = {
             name: step
             for name, step in preprocess_pipe.named_steps.items()
-            if name not in ["WOE", "Benchmark", "Impute"]
+            if name not in ["WOE", "Impute"]
         }
         feature_names = (
             list(model.feature_names_in_)
@@ -566,6 +612,13 @@ class Train:
 
         return performance
 
+    def dump_artifacts(self):
+        model_dir = os.path.join(os.path.abspath(self.model_path), self.ts)
+        os.makedirs(model_dir, exist_ok=True)
+        for name, artifact in self._artifacts.items():
+            joblib.dump(artifact, os.path.join(model_dir, name))
+        cprint(f"Model files successfully dumped in path {model_dir}", "green")
+
     def write_report(
         self,
         performance: Optional[Dict[str, Any]] = None,
@@ -624,14 +677,12 @@ class Train:
     ):
         if trial_index is None and params is None:
             raise ValueError("Either trial_index or params must be provided.")
-
         self.ts = ts
         model_dir = os.path.join(self.model_path, self.ts)
 
         if not os.path.exists(model_dir):
             raise FileNotFoundError(f"Model directory {model_dir} does not exist.")
 
-        # Load required artifacts
         fitting_set = joblib.load(os.path.join(model_dir, "fitting_set"))
         preprocessor = joblib.load(os.path.join(model_dir, "preprocessor"))
         tuner = joblib.load(os.path.join(model_dir, "tuner"))
@@ -692,10 +743,7 @@ class Train:
         model.set_params(**selected_params)
         model = model.fit(train_set, trainy)
 
-        # Generate new calibrator
         train_proba = model.predict_proba(train_set)[:, 1]
-
-        # Select calibrator based on calibration_method
         if self.calibration_method == "isotonic":
             calibrator = IsotonicCalibrator(
                 n_bins=self.n_bins,
@@ -703,7 +751,7 @@ class Train:
                 score_cap=self.score_cap if self.score_cap is not None else 1.0,
                 scale_threshold=self.scale_threshold,
             )
-        else:  # polynomial (Platt scaling)
+        else:
             calibrator = PlattCalibrator(
                 n_bins=self.n_bins,
                 n_degree=self.n_degree,
@@ -713,13 +761,11 @@ class Train:
             )
         calibrator = calibrator.fit(train_proba, trainy)
 
-        # Update saved artifacts with new model and calibrator
-        # Create a new timestamp for the refitted model
         new_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         new_model_dir = os.path.join(os.path.abspath(self.model_path), new_ts)
         os.makedirs(new_model_dir, exist_ok=True)
 
-        artifacts = {
+        self._artifacts = {
             "fitting_set": fitting_set,
             "preprocessor": preprocessor,
             "model": model,
@@ -731,10 +777,7 @@ class Train:
                 "params": selected_params,
             },
         }
-
-        for name, artifact in artifacts.items():
-            joblib.dump(artifact, os.path.join(new_model_dir, name))
-
+        self.dump_artifacts()
         self.ts = new_ts
         cprint(f"[SUCCESS] Refitted model saved in path {new_model_dir}", "green")
         cprint(f"[INFO] Use ts='{new_ts}' for transform()", "cyan")
