@@ -197,7 +197,7 @@ class Logit(BaseEstimator, ClassifierMixin):
         cprint(str(self.detail), "cyan")
 
     def get_importance(self):
-        return self.detail.drop("const", axis=0)
+        return self.detail.drop("const", axis=0, errors="ignore")
 
 
 class CoefSelector(TransformerMixin):

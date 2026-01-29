@@ -49,7 +49,8 @@ class Encoder(BaseEstimator, TransformerMixin):
         >>> spec = {
         ...     'age': 'bestKS',        # Best KS binning for numerical
         ...     'income': 'chiMerge',   # Chi-merge binning for numerical
-        ...     'education': 'woeMerge' # WOE merge for categorical
+        ...     'education': 'woeMerge', # WOE merge for categorical
+        ...     'score': ('optimal', 'ascending')  # Optimal binning with ascending monotonic trend
         ... }
         >>>
         >>> # Fit and transform
@@ -84,6 +85,8 @@ class Encoder(BaseEstimator, TransformerMixin):
                 - 'simple': Simple binning
                 - List[float]: Custom bin edges
                 - False: No binning (use original categories)
+                - Tuple[str, str]: (strategy, monotonic_trend) for feature-wise monotonic trend.
+                  Example: ('optimal', 'ascending'). If not specified, uses 'auto_asc_desc'.
             missing_values: List of values to treat as missing (default: [-990000, "__N.A__"])
             treat_missing: Strategy for missing value treatment:
                 - 'mean': Use mean of normal WOE values
@@ -491,7 +494,6 @@ class Encoder(BaseEstimator, TransformerMixin):
             **kwargs: Additional keyword arguments:
                 target_bin_cnt (int): Target number of bins (default: 5)
                 min_bin_rate (float): Minimum bin size ratio (default: 0.05)
-                monotonic_trend (str): Monotonic trend for optimal binning (default: 'auto_asc_desc')
 
         Returns:
             self: Fitted encoder instance
@@ -504,6 +506,14 @@ class Encoder(BaseEstimator, TransformerMixin):
             >>> encoder = Encoder(spec={'age': 'bestKS', 'income': 'chiMerge'})
             >>> encoder.fit(X_train, y_train)
             >>> print(f"Fitted {len(encoder.bin_info)} features")
+            >>>
+            >>> # Feature-wise monotonic trend
+            >>> encoder = Encoder(spec={
+            ...     'age': ('optimal', 'ascending'),
+            ...     'income': ('optimal', 'descending'),
+            ...     'score': 'optimal'  # Uses default 'auto_asc_desc'
+            ... })
+            >>> encoder.fit(X_train, y_train)
         """
         cprint("[INFO] Fitting...", "white")
         if self.copy:
@@ -520,12 +530,23 @@ class Encoder(BaseEstimator, TransformerMixin):
             )
 
         idx = 0
-        for feat, bin_strategy in self.spec.items():
+        for feat, bin_strategy_spec in self.spec.items():
             idx += 1
             cprint(f"[INFO] {idx}/{len(self.spec)} Process {feat}", "white")
             target_bin_cnt = kwargs.get("target_bin_cnt", 5)
             min_bin_rate = kwargs.get("min_bin_rate", 0.05)
-            monotonic_trend = kwargs.get("monotonic_trend", "auto_asc_desc")
+
+            if isinstance(bin_strategy_spec, tuple):
+                bin_strategy = bin_strategy_spec[0]
+                monotonic_trend = (
+                    bin_strategy_spec[1]
+                    if len(bin_strategy_spec) > 1
+                    else "auto_asc_desc"
+                )
+            else:
+                bin_strategy = bin_strategy_spec
+                monotonic_trend = "auto_asc_desc"
+
             if feat not in X:
                 raise KeyError(f"{feat} in Binning Category is not in X columns.")
 

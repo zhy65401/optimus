@@ -263,14 +263,11 @@ class Train:
             "testy": testy,
         }
 
-        # Build feature specification
-        # Use custom spec if provided, otherwise default to 'auto' for all features
         if self.spec is not None:
             spec = self.spec
         else:
             spec = {col: "auto" for col in X.columns}
 
-        # Initialize and fit preprocessor with new API
         preprocessor = Preprocess(
             spec=spec,
             impute_strategy=self.impute_strategy,
@@ -566,28 +563,6 @@ class Train:
             else:
                 feature_importance = None
 
-        # Prepare SHAP analysis data
-        shap_data = None
-        if self.model_type in ["LR", "XGB", "LGBM"]:
-            # Determine model type for SHAP
-            if self.model_type == "LR":
-                shap_model_type = "linear"
-            else:
-                shap_model_type = "tree"
-
-            # Use train set for SHAP analysis
-            train_X = sample_set.get("train", {}).get("X")
-            train_y = sample_set.get("train", {}).get("y")
-
-            if train_X is not None and len(train_X) > 0:
-                shap_data = {
-                    "model": model,
-                    "X": train_X,
-                    "y": train_y,
-                    "sample_size": 1000,
-                    "model_type": shap_model_type,
-                }
-
         performance = {
             "version": self.version,
             "model_id": self.ts,
@@ -598,7 +573,6 @@ class Train:
             "tune_results": tuner.results,
             "best_params": tuner.best_params if hasattr(tuner, "best_params") else None,
             "feature_importance": feature_importance,
-            "shap_data": shap_data,
             "calibrator": calibrator,
             "scoredist": {"Distribution": df_distribution, "PSI": df_psi},
             "scorecard": scorecards,
