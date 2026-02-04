@@ -518,16 +518,17 @@ class Train:
         df_distribution = pd.concat(df_distribution, axis=1)
 
         # Calculate PSI for each sample type using Metrics module
-        psi_results = []
+        psi_results = {}
         train_dist = df_distribution[("train", "% Score")]
         for sample_type in sample_types:
             if sample_type != "train":
                 test_dist = df_distribution[(sample_type, "% Score")]
                 psi = Metrics.get_psi_from_distributions(train_dist, test_dist)
-                psi_results.append({sample_type: psi})
+                psi_results[sample_type] = psi
 
-        df_psi = pd.DataFrame(psi_results).T
-        df_psi.columns = ["% Score PSI"]
+        df_psi = pd.DataFrame.from_dict(
+            psi_results, orient="index", columns=["% Score PSI"]
+        )
         df_psi = df_psi.sort_values("% Score PSI")
 
         # Benchmark is now separate from preprocess_pipe
