@@ -59,48 +59,34 @@ performance = trainer.transform(X, y, e)
 
 ```python
 import pandas as pd
-from optimus.imputer import Imputer
-from optimus.encoder import Encoder
-from optimus.feature_selection import IVSelector, CorrSelector
-from optimus.estimator import Benchmark
-from optimus.calibrator import Calibration
-from sklearn.pipeline import Pipeline
+from optimus import Train
 
-# 1. Missing value imputation (NEW in v0.3.1)
-imputer = Imputer(
-    impute_strategy={
-        'age': 'median',
-        'income': 'mean',
-        'occupation': 'mode'
-    },
-    missing_values=[-999, '__N.A__']
+# Quick start with the high-level Train API
+# Handles preprocessing, feature selection, model training, and calibration automatically
+trainer = Train(
+    model_type='LGBM',           # LightGBM model
+    tune_method='BO',            # Bayesian Optimization for hyperparameter tuning
+    max_evals=100,               # Number of tuning iterations
+    ft_spec={                    # Feature type specification
+        'age': 'bestKS',         # Numerical feature using BestKS binning
+        'income': 'chiMerge',    # Numerical feature using ChiMerge binning
+        'occupation': 'woeMerge', # Categorical feature using WOE merging
+        'education': [1, 2, 3, 4] # Custom binning boundaries
+    }
 )
 
-# 2. Data preprocessing and feature encoding
-encoder = Encoder(spec={
-    'age': 'bestKS',           # Numerical feature using BestKS binning
-    'income': 'chiMerge',      # Numerical feature using ChiMerge binning
-    'occupation': 'woeMerge',   # Categorical feature using WOE merging
-    'education': [1, 2, 3, 4]   # Custom binning boundaries
-})
+# Fit the model
+trainer.fit(X_train, y_train, external_data)
 
-# 3. Feature selection pipeline
-feature_selector = Pipeline([
-    ('iv', IVSelector(iv_threshold=0.02)),
-    ('corr', CorrSelector(corr_threshold=0.95))
-])
+# Transform and generate predictions
+performance = trainer.transform(X_test, y_test, external_data)
 
-# 4. Model training
-benchmark = Benchmark(positive_coef=False, remove_method="iv")
-
-# 5. Model calibration
-calibrator = Calibration(score_type='mega_score')
-
-# Complete workflow example
-X_train_imputed = imputer.fit_transform(X_train)
-X_train_encoded = encoder.fit_transform(X_train_imputed, y_train)
-X_selected = feature_selector.fit_transform(X_train_encoded, y_train)
-model = benchmark.fit(X_selected, y_train)
+# Generate comprehensive Excel report
+trainer.write_report(
+    performance=performance,
+    report_path='./reports',
+    report_name='model_report'
+)
 ```
 
 ## Feature Overview
@@ -185,11 +171,12 @@ encoder = Encoder(
     treat_missing='mean'            # Missing value handling strategy
 )
 
-# Transform data and automatically generate WOE report when y is provided
+# Transform data and automatically generate WOE report
 X_encoded = encoder.fit_transform(X, y)
 
-# Access WOE analysis report (automatically generated)
-woe_report = encoder.woe_df
+# Access WOE analysis report (automatically generated during fit)
+# woe_df is a dict with 'binning' and 'summary' DataFrames
+woe_report = encoder.woe_df  # {'binning': df_binning, 'summary': df_summary}
 ```
 
 ### Feature Selection
@@ -246,25 +233,24 @@ pipeline = Pipeline([
 ### Model Training
 
 #### Supported Algorithms
-- **Benchmark**: Benchmark model with a basic logistic regression without any tunning in parameters.
-- **Logistic Regression**: With coefficient testing and significance analysis
-- **XGBoost**: Gradient boosting tree model
-- **LightGBM**: Efficient gradient boosting framework
+- **Logistic Regression (LR)**: With coefficient testing and hyperparameter tuning
+- **XGBoost (XGB)**: Gradient boosting tree model
+- **LightGBM (LGBM)**: Efficient gradient boosting framework
 
 ```python
-from optimus.estimator import Benchmark, Estimators
+from optimus import Train
 
-# Benchmark logistic regression model (with built-in feature filtering)
-benchmark = Benchmark(
-    positive_coef=False,           # Require negative coefficients (risk features)
-    remove_method="iv",            # Removal strategy
-    pvalue_threshold=0.05          # Significance threshold
-)
-benchmark.fit(X, y)
+# Logistic Regression with tuning
+lr_trainer = Train(model_type='LR', tune_method='BO')
+lr_trainer.fit(X_train, y_train, external_data)
 
-# Using other algorithms
-lgbm_model = Estimators.LGBM.value
-lgbm_model.fit(X, y)
+# LightGBM with Bayesian Optimization
+lgbm_trainer = Train(model_type='LGBM', tune_method='BO', max_evals=100)
+lgbm_trainer.fit(X_train, y_train, external_data)
+
+# XGBoost with Grid Search
+xgb_trainer = Train(model_type='XGB', tune_method='GS')
+xgb_trainer.fit(X_train, y_train, external_data)
 ```
 
 #### Hyperparameter Optimization
@@ -394,89 +380,53 @@ print(performance['feature_selection'])
 
 ```python
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from optimus.imputer import Imputer
-from optimus.encoder import Encoder
-from optimus.feature_selection import IVSelector, PSISelector, CorrSelector
-from optimus.estimator import Benchmark
-from optimus.calibrator import Calibration
-from optimus.reporter import Reporter
+from optimus import Train
 
 # 1. Data loading
 df = pd.read_csv('credit_data.csv')
 X = df.drop('target', axis=1)
 y = df['target']
 
-# 2. Data splitting
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.3, random_state=42, stratify=y
-)
+# 2. Prepare external data with sample_type
+external_data = pd.DataFrame({
+    'sample_type': ['train'] * len(X)
+})
 
-# 3. Feature engineering pipeline
-preprocessing_pipeline = Pipeline([
-    # Missing value imputation (NEW in v0.3.1)
-    ('imputer', Imputer(
-        impute_strategy={
-            'age': 'median',
-            'income': 'mean',
-            'education': 'mode',
-            'employment_length': 'median'
-        },
-        missing_values=[-999, '__N.A__']
-    )),
-
-    # WOE encoding
-    ('encoder', Encoder(spec={
+# 3. Initialize trainer with feature specifications
+trainer = Train(
+    model_type='LGBM',           # LightGBM model
+    tune_method='BO',            # Bayesian Optimization
+    max_evals=100,               # Tuning iterations
+    ft_spec={                    # Feature type specifications
         'age': 'bestKS',
         'income': 'chiMerge',
         'education': 'woeMerge',
         'employment_length': 'optimal'
-    })),
-
-    # Feature selection
-    ('feature_selection', Pipeline([
-        ('iv', IVSelector(iv_threshold=0.02)),
-        ('psi', PSISelector(psi_threshold=0.1)),
-        ('corr', CorrSelector(corr_threshold=0.95))
-    ]))
-])
-
-# 4. Preprocessing
-X_train_processed = preprocessing_pipeline.fit_transform(X_train, y_train)
-X_test_processed = preprocessing_pipeline.transform(X_test)
-
-# 5. Model training
-model = Benchmark()
-model.fit(X_train_processed, y_train)
-
-# 6. Model calibration
-y_prob = model.predict_proba(X_test_processed)[:, 1]
-calibrator = Calibration(score_type='mega_score')
-calibrator.fit(y_prob, y_test)
-scores = calibrator.transform(y_prob)
-
-# 7. Report generation
-reporter = Reporter('credit_model_report.xlsx')
-performance_data = {
-    'sample_set': {
-        'test': {
-            'X': X_test,
-            'y': y_test,
-            'e': pd.DataFrame({
-                'sample_type': ['test'] * len(X_test),
-                'proba': y_prob,
-                'score': scores
-            })
-        }
     },
-    'model_id': '20241201_143022',
-    'label': 'target',
-    'missing_values': [-999, 'NULL'],
-    'calibrate_detail': calibrator.calibrate_detail,
-    'scorecard': {'test': calibrator.compare_calibrate_result(scores, y_test)}
-}
-reporter.generate_report(performance_data)
+    impute_strategy={            # Missing value strategies
+        'age': 'median',
+        'income': 'mean',
+        'education': 'mode',
+        'employment_length': 'median'
+    },
+    missing_values=[-999, '__N.A__'],  # Missing value indicators
+    iv_threshold=0.02,           # IV filter threshold
+    psi_threshold=0.1,           # PSI filter threshold
+    corr_threshold=0.95          # Correlation filter threshold
+)
+
+# 4. Train the model
+trainer.fit(X, y, external_data)
+
+# 5. Generate predictions and performance report
+performance = trainer.transform(X, y, external_data)
+
+# 6. Generate comprehensive Excel report
+trainer.write_report(
+    performance=performance,
+    report_path='./reports',
+    report_name='credit_model_report'
+)
 ```
 
 ### Advanced Pipeline Configuration
@@ -522,7 +472,37 @@ model_tuner = model_builder.build_model()
 
 ## Release Notes
 
-### v0.3.1 (Current Version)
+### v0.4.1 (Current Version)
+- **New Feature - ImbalanceSampler**: Advanced sampling techniques for handling imbalanced datasets
+  - Support for 4 sampling strategies: under-sampling, over-sampling, SMOTE, and combined
+  - Configurable target ratio for flexible class balance adjustment
+  - Particularly useful for fraud detection and rare event prediction scenarios
+- **Comprehensive Demo Script**: Added `demo.py` showcasing all major features
+  - Demonstrations for binning methods (QCut, ChiMerge, OptimalCut)
+  - Imbalanced data sampling examples with all 4 strategies
+  - Feature selection pipeline demonstrations (IV, PSI, GINI, VIF, Correlation, Boosting Tree, Stability)
+  - Model calibration examples (Platt and Isotonic calibration)
+  - End-to-end training pipeline with fraud detection dataset
+  - Metrics calculation examples (IV, GINI, KS, AUC, PSI)
+- **Enhanced Package Exports**: Added `ImbalanceSampler` to `__all__` in `__init__.py` for easier imports
+- **Documentation Updates**: Added comprehensive docstrings and usage examples for ImbalanceSampler
+- **Bug Fixes**:
+  - Fixed demo script compatibility with actual API parameter names
+  - Corrected spec format for categorical features (use 'woeMerge' instead of 'c')
+  - Added proper type conversion for boolean columns in VIF calculation
+  - Fixed PlattCalibrator mapping_base format (dict instead of int)
+  - Fixed Metrics input type requirements (pandas Series with names)
+  - Added score_bins parameter handling in Train class
+  - Fixed Reporter label column requirement in external data
+
+### v0.4.0
+- **Isotonic Calibration Support**: Added isotonic regression calibration method for improved calibration on skewed distributions
+- **Auto-Mapping Feature**: Automatic score mapping generation for isotonic calibration with uniform and high-risk stretching modes
+- **Enhanced Calibration API**: Support for both polynomial (log-odds) and isotonic (probability) calibration methods
+- **Trainer Integration**: Full integration of calibration methods into Train class with `calibration_method` and `high_score_threshold` parameters
+- **Improved Documentation**: Comprehensive documentation for all calibration modes and parameter combinations
+
+### v0.3.1
 - **New Feature - Imputer Class**: Introduced comprehensive `Imputer` class for missing value imputation with feature-level strategy control
   - Support for multiple imputation strategies: mean, median, min, max, mode, and separate
   - Flexible missing value identification with customizable missing value markers
@@ -561,7 +541,7 @@ model_tuner = model_builder.build_model()
 - **PSI Calculation Fix**: Corrected Population Stability Index calculation for accurate distribution comparisons
 - **Extended Documentation**: Added detailed function documentation and usage examples for all major components
 - **Flexible Sample Types**: Support for custom sample types beyond train/test for comprehensive model evaluation
-- **Encoder Code Simplification**: Merged `get_woe_df()` functionality into `transform()` method - when target variable `y` is provided, WOE DataFrame is automatically generated and stored in `self.woe_df`, eliminating the need for separate method calls
+- **Encoder Code Simplification**: WOE DataFrame is automatically generated during `fit()` and stored in `self.woe_df` as a dict with 'binning' and 'summary' keys. The `get_woe_df()` method remains available for generating WOE analysis on new datasets.
 
 ### v0.2.0 (Previous Version)
 - **New Feature**: Integrated OptimalBinning algorithm into binner

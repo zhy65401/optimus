@@ -1,7 +1,6 @@
 #!/usr/bin/env python
-# Version: 0.4.0
+# Version: 0.4.1
 # Created: 2024-04-07
-# Last Modified: 2025-08-19
 # Author: ["Hanyuan Zhang"]
 
 from itertools import combinations
@@ -401,9 +400,7 @@ class WOEMerge(BaseEstimator, TransformerMixin):
         return "__N.A__"
 
     def _pre_merge(self, X):
-        """
-        Pre-merge the bins that fewer than min_bin_rate to decrease the cardinality in feature.
-        """
+        # Pre-merge low-frequency categories (below min_bin_rate) into __OTHERS__ to reduce cardinality
         cutoff_count = np.ceil(self.min_bin_rate * len(X))
         cat_count = pd.Series(X).value_counts()
         self.cat_others = list(cat_count[cat_count < cutoff_count].index.values)

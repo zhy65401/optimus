@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.4.0
+# Version: 0.4.1
 # Created: 2026-01-14
 # Last Modified: 2026-01-14
 # Author: ["Hanyuan Zhang"]
@@ -84,33 +84,12 @@ class Imputer(BaseEstimator, TransformerMixin):
         self.fill_values_: Dict[str, Union[float, str, int]] = {}
 
     def _identify_missing(self, X: pd.Series) -> pd.Series:
-        """
-        Identify missing values in a feature series.
-
-        Args:
-            X: Feature series to check
-
-        Returns:
-            Boolean series indicating missing positions
-        """
         return X.apply(lambda x: pd.isna(x) or (x in self.missing_values))
 
     def _compute_fill_value(
         self, X: pd.Series, strategy: str
     ) -> Union[float, str, int]:
-        """
-        Compute the fill value for a feature based on strategy.
-
-        Args:
-            X: Non-missing feature values
-            strategy: Imputation strategy
-
-        Returns:
-            Computed fill value
-
-        Raises:
-            ValueError: If strategy is not applicable to feature type
-        """
+        # Compute fill value from non-missing values using specified strategy (mean/median/min/max/mode/separate)
         valid_strategies = ("mean", "median", "min", "max", "mode", "separate")
         if strategy not in valid_strategies:
             raise ValueError(

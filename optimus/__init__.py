@@ -8,13 +8,13 @@ This package provides comprehensive tools for:
 - Model training and hyperparameter tuning
 - Model calibration and scoring
 - Automated report generation
+- Imbalanced data handling
 """
 
 # Binning classes
 from .binner import BestKSCut, ChiMergeCut, OptimalCut, QCut, SimpleCut, WOEMerge
 from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .encoder import Encoder
-from .estimator import Benchmark
 
 # Feature selection classes
 from .feature_selection import (
@@ -23,6 +23,7 @@ from .feature_selection import (
     GINISelector,
     IVSelector,
     PSISelector,
+    StabilitySelector,
     VIFSelector,
 )
 from .imputer import Imputer
@@ -31,10 +32,13 @@ from .imputer import Imputer
 from .metrics import Metrics
 from .pipeliner import Model, Preprocess
 from .reporter import Reporter
+
+# Advanced features
+from .sampler import ImbalanceSampler
 from .trainer import Train
 from .tuner import BO, GridSearch
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "Hanyuan Zhang"
 __email__ = "klesterchueng@gmail.com"
 
@@ -47,7 +51,6 @@ __all__ = [
     "PlattCalibrator",
     "Preprocess",
     "Model",
-    "Benchmark",
     "Reporter",
     # Feature selection
     "CorrSelector",
@@ -56,6 +59,7 @@ __all__ = [
     "GINISelector",
     "VIFSelector",
     "BoostingTreeSelector",
+    "StabilitySelector",
     # Binning
     "QCut",
     "SimpleCut",
@@ -67,4 +71,6 @@ __all__ = [
     "Metrics",
     "GridSearch",
     "BO",
+    # Advanced
+    "ImbalanceSampler",
 ]

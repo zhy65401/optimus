@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Version: 0.4.0
+# Version: 0.4.1
 # Created: 2024-04-07
 # Author: ["Hanyuan Zhang"]
 
@@ -243,5 +243,40 @@ class Metrics:
         test_prop = test_prop.reindex(all_categories, fill_value=eps)
 
         psi = np.sum((test_prop - base_prop) * np.log(test_prop / base_prop))
+
+        return psi
+
+    @classmethod
+    def get_psi_from_distributions(
+        cls,
+        base_dist: Union[pd.Series, np.ndarray],
+        test_dist: Union[pd.Series, np.ndarray],
+    ) -> float:
+        """
+        Calculate PSI from pre-computed distribution proportions.
+
+        Use this when you already have aggregated distributions (e.g., binned score
+        distributions) rather than raw data values.
+
+        Args:
+            base_dist: Base (training) distribution proportions (should sum to 1)
+            test_dist: Test distribution proportions (should sum to 1)
+
+        Returns:
+            float: PSI value
+
+        Examples:
+            >>> # Score bin distributions
+            >>> train_dist = np.array([0.1, 0.2, 0.3, 0.25, 0.15])
+            >>> test_dist = np.array([0.12, 0.18, 0.32, 0.23, 0.15])
+            >>> psi = Metrics.get_psi_from_distributions(train_dist, test_dist)
+        """
+        base_prop = pd.Series(base_dist)
+        test_prop = pd.Series(test_dist)
+
+        eps = np.finfo(float).eps
+        psi = np.sum(
+            (test_prop - base_prop) * np.log((test_prop + eps) / (base_prop + eps))
+        )
 
         return psi
