@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
@@ -5,9 +6,11 @@ from typing import Any, Dict, List, Optional, Union
 import joblib
 import numpy as np
 import pandas as pd
+import shap
 from termcolor import cprint
 
 from .calibrator import IsotonicCalibrator, PlattCalibrator
+from .estimator import Estimators
 from .metrics import Metrics
 from .pipeliner import Model, Preprocess, _DefaultParams
 from .reporter import Reporter
@@ -453,10 +456,6 @@ class Train:
             # Add instance-level SHAP explanations (JSON format)
             if self.model_type in ["LR", "XGB", "LGBM"]:
                 try:
-                    import json
-
-                    import shap
-
                     # Determine model type for SHAP
                     if self.model_type == "LR":
                         explainer = shap.LinearExplainer(model, transX)
@@ -759,9 +758,6 @@ class Train:
 
         # Get preprocessed training data
         train_set = preprocessor.transform(trainX)
-
-        # Create and train new model with selected parameters
-        from .estimator import Estimators
 
         model = Estimators[self.model_type].value
         model.set_params(**selected_params)
