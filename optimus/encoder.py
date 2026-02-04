@@ -27,7 +27,7 @@ class Encoder(BaseEstimator, TransformerMixin):
     Attributes:
         spec: Dictionary mapping feature names to binning strategies
         bin_info: Dictionary containing WOE mappings for each feature
-        woe_df: DataFrame containing detailed WOE analysis (generated when y is provided to transform)
+        woe_df: Dictionary with 'binning' and 'summary' DataFrames containing WOE analysis (auto-generated during fit)
         missing_values: List of values to treat as missing
         treat_missing: Strategy for handling missing values ('mean', 'min', 'max', 'zero')
         keep_dtypes: Whether to preserve original data types after transformation
@@ -101,7 +101,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         """
         self.spec = spec
         self.bin_info: Dict[str, Dict] = {}
-        self.woe_df: Optional[pd.DataFrame] = None
+        self.woe_df: Optional[Dict[str, pd.DataFrame]] = None
         self.missing_values = missing_values or [-990000, "__N.A__"]
         self.treat_missing = treat_missing
         self.keep_dtypes = keep_dtypes
@@ -116,29 +116,7 @@ class Encoder(BaseEstimator, TransformerMixin):
     def _split_dataset(
         self, X: pd.Series, y: Optional[pd.Series] = None
     ) -> Tuple[pd.Series, pd.Series, Optional[pd.Series], Optional[pd.Series]]:
-        """
-        Split feature data into normal and missing value subsets.
-
-        This method identifies missing values based on NaN, None, and user-defined
-        missing values, then splits both feature and target data accordingly.
-
-        Args:
-            X: Feature series to split
-            y: Optional target series to split correspondingly
-
-        Returns:
-            Tuple containing:
-            - X_missing: Feature values identified as missing
-            - X_normal: Feature values not identified as missing
-            - y_missing: Target values corresponding to missing features (if y provided)
-            - y_normal: Target values corresponding to normal features (if y provided)
-
-        Examples:
-            >>> encoder = Encoder(spec={})
-            >>> X = pd.Series([1, 2, np.nan, 4, -990000])
-            >>> y = pd.Series([0, 1, 0, 1, 0])
-            >>> X_miss, X_norm, y_miss, y_norm = encoder._split_dataset(X, y)
-        """
+        # Split data into missing and normal value subsets based on NaN and user-defined missing values
         missing_idc = X.apply(lambda x: pd.isna(x) or (x in self.missing_values))
         normal_idc = X.apply(
             lambda x: (not pd.isna(x)) and (x not in self.missing_values)
@@ -159,26 +137,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         return X_missing, X_normal, y_missing, y_normal
 
     def _odds_ratio(self, df):
-        """
-        Calculate cumulative odds ratios for risk rule setting.
-
-        Computes negative and positive odds ratios for each bin, comparing
-        the odds before (inclusive) and after the current bin. Used to
-        identify optimal score cut-off points.
-
-        Logic:
-            - neg_odds > pos_odds: Feature separates better before bin (a,b]
-              -> Suggests rule: feature <= b
-            - pos_odds > neg_odds: Feature separates better after bin
-              -> Suggests rule: feature > b
-
-        Args:
-            df: DataFrame with 'bad' and 'good' columns for each bin.
-
-        Returns:
-            Tuple[List, List]: (neg_odds, pos_odds) cumulative odds ratios.
-        """
-
+        # Calculate cumulative odds ratios (neg/pos) for each bin to identify optimal score cut-off points
         neg_odds = []
         pos_odds = []
         eps = np.finfo(float).eps  # Machine epsilon for float
@@ -202,21 +161,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         return neg_odds, pos_odds
 
     def _stat_feat(self, X_normal, y_normal, X_missing, y_missing):
-        """
-        Generate detailed WOE statistics for a single feature.
-
-        Computes comprehensive binning statistics including observation counts,
-        bad/good rates, distributions, KS, lift, WOE, and IV metrics.
-
-        Args:
-            X_normal: Binned feature values (non-missing).
-            y_normal: Target values for non-missing observations.
-            X_missing: Feature values identified as missing.
-            y_missing: Target values for missing observations.
-
-        Returns:
-            pd.DataFrame: Multi-index DataFrame with bin-level statistics.
-        """
+        # Compute bin-level WOE statistics (obs counts, bad/good rates, KS, lift, WOE, IV)
         original_cols = [
             "bin_total",
             "bin_rate",
@@ -348,21 +293,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         return res
 
     def _get_woe(self, X_normal, y_normal, X_missing, y_missing):
-        """
-        Calculate WOE values for each bin of a feature.
-
-        Computes Weight of Evidence for both normal and missing value bins.
-        WOE = ln((Good Distribution) / (Bad Distribution)).
-
-        Args:
-            X_normal: Binned feature values (non-missing).
-            y_normal: Target values for non-missing observations.
-            X_missing: Feature values identified as missing.
-            y_missing: Target values for missing observations.
-
-        Returns:
-            Dict[Any, float]: Mapping from bin values to WOE values.
-        """
+        # Calculate WOE (Weight of Evidence) value for each bin: ln(Good% / Bad%)
         # need to compute distribution and woe after concating missing and normal parts.
         df_y = pd.concat([y_normal, y_missing])
         total_bad = sum(df_y)
@@ -419,15 +350,7 @@ class Encoder(BaseEstimator, TransformerMixin):
         return "__N.A__"
 
     def _treat_missing(self):
-        """
-        Ensure every feature has bins for handling missing/unexpected values.
-
-        This method:
-        1. Ensures at least -990000 (numerical) or __N.A__ (categorical) bin exists
-        2. Ensures all user-defined missing values are present in bin_info
-        3. For numerical features, fills in WOE for bins without training samples
-        Uses the global treat_missing strategy for WOE assignment.
-        """
+        # Ensure every feature has bins for missing/unexpected values using treat_missing strategy
         valid_strategies = ("mean", "min", "max", "zero")
         if self.treat_missing not in valid_strategies:
             raise ValueError(
@@ -719,33 +642,131 @@ class Encoder(BaseEstimator, TransformerMixin):
             outX = outX.astype("float64")
         return outX
 
+    def _stat_summary(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        woe_df: pd.DataFrame,
+        missing_values: List[Any],
+    ) -> pd.DataFrame:
+        # Compute feature-level summary statistics (missing%, bad rate, descriptive stats, modes, KS, IV)
+        feature_summaries = []
+        for column in X.columns:
+            total = len(X)
+            missing = X[column].apply(lambda x: x in missing_values).sum()
+            unique = X[column].nunique()
+            unique_without_missing = X.loc[
+                X[column].apply(lambda x: x not in missing_values), column
+            ].nunique()
+            bad_rate_with_missing = y.mean()
+            bad_rate_without_missing = y[
+                X[column].apply(lambda x: x not in missing_values)
+            ].mean()
+
+            X_normal = X.loc[X[column].apply(lambda x: x not in missing_values)]
+            mode = (
+                X_normal[column].mode().iloc[0]
+                if len(X_normal[column].mode()) > 0
+                else None
+            )
+            mode_rate = (X_normal[column] == mode).mean()
+            second_mode = (
+                X_normal[column].value_counts().index[1]
+                if len(X_normal[column].value_counts()) > 1
+                else None
+            )
+            second_mode_rate = (
+                (X_normal[column] == second_mode).mean() if second_mode else None
+            )
+            third_mode = (
+                X_normal[column].value_counts().index[2]
+                if len(X_normal[column].value_counts()) > 2
+                else None
+            )
+            third_mode_rate = (
+                (X_normal[column] == third_mode).mean() if third_mode else None
+            )
+
+            is_numerical = is_numeric_dtype(X_normal[column])
+            desc_stats = X_normal[column].describe() if is_numerical else None
+            stats_min = desc_stats["min"] if is_numerical else None
+            stats_25 = desc_stats["25%"] if is_numerical else None
+            stats_mean = desc_stats["mean"] if is_numerical else None
+            stats_75 = desc_stats["75%"] if is_numerical else None
+            stats_max = desc_stats["max"] if is_numerical else None
+            stats_std = desc_stats["std"] if is_numerical else None
+            zero = (X_normal[column] == 0).sum() if is_numerical else None
+            zero_rate = zero / total if is_numerical else None
+            cva = stats_std / stats_mean if is_numerical else None
+
+            feature_summary = {
+                "Feature": column,
+                "total": total,
+                "#missing": missing,
+                "%missing": missing / total,
+                "#zero": zero,
+                "%zero": zero_rate,
+                "Bad Rate (with missing)": bad_rate_with_missing,
+                "Bad Rate (without missing)": bad_rate_without_missing,
+                "Unique (with missing)": unique,
+                "Unique (without missing)": unique_without_missing,
+                "min": stats_min,
+                "25%": stats_25,
+                "mean": stats_mean,
+                "75%": stats_75,
+                "max": stats_max,
+                "std": stats_std,
+                "cva": cva,
+                "mode": mode,
+                "mode_rate": mode_rate,
+                "second_mode": second_mode,
+                "second_mode_rate": second_mode_rate,
+                "third_mode": third_mode,
+                "third_mode_rate": third_mode_rate,
+            }
+
+            feature_summaries.append(feature_summary)
+
+        summary_df = pd.DataFrame(feature_summaries).set_index("Feature")
+        return pd.concat(
+            [
+                summary_df,
+                woe_df[["KS", "IV"]]
+                .reset_index()
+                .groupby("feature_name")
+                .agg(KS=(("KS", ""), "max"), IV=(("IV", "bin"), "sum")),
+            ],
+            axis=1,
+        )
+
     def get_woe_df(
         self, X: pd.DataFrame, y: Union[pd.Series, np.ndarray]
-    ) -> pd.DataFrame:
+    ) -> Dict[str, pd.DataFrame]:
         """
-        Generate WOE analysis DataFrame for any dataset without transforming it.
+        Generate WOE analysis with both bin-level and feature-level statistics.
 
-        This method computes WOE statistics (IV, KS, distribution, etc.) for the
-        given dataset using the fitted binning. Useful for generating test set
-        WOE analysis or comparing train/test distributions.
+        This method computes comprehensive statistics for the given dataset using
+        the fitted binning, including both bin-level WOE metrics and feature-level
+        summary statistics.
 
         Args:
             X: Feature data to analyze
             y: Target variable (binary: 0 and 1)
 
         Returns:
-            pd.DataFrame: WOE analysis DataFrame with multi-level columns containing:
-                - Obs: Observation counts and rates
-                - Bad/Good: Bad and good counts, rates, distributions
-                - KS, Lift, WOE, IV: Model performance metrics per bin
+            Dict[str, pd.DataFrame]: Dictionary containing:
+                - 'binning': Bin-level WOE statistics (multi-level columns)
+                - 'summary': Feature-level summary statistics
 
         Raises:
             RuntimeError: If encoder has not been fitted yet
 
         Examples:
             >>> encoder.fit(X_train, y_train)
-            >>> train_woe_df = encoder.woe_df  # Generated during fit
-            >>> test_woe_df = encoder.get_woe_df(X_test, y_test)  # Generate for test
+            >>> train_woe = encoder.woe_df  # Dict generated during fit
+            >>> test_woe = encoder.get_woe_df(X_test, y_test)
+            >>> print(test_woe['binning'])  # Bin-level stats
+            >>> print(test_woe['summary'])  # Feature-level stats
         """
         if not self.bin_info:
             raise RuntimeError("Encoder not fitted. Call fit() first.")
@@ -789,22 +810,27 @@ class Encoder(BaseEstimator, TransformerMixin):
             woe_info.append(feat_woe_df)
 
         if not woe_info:
-            return pd.DataFrame()
+            return {"binning": pd.DataFrame(), "summary": pd.DataFrame()}
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
-            result_df = pd.concat(woe_info)
+            binning_df = pd.concat(woe_info)
 
         # Order by IV
         ordered_ft = (
-            result_df["IV"]["feature"]
+            binning_df["IV"]["feature"]
             .droplevel(1)
             .reset_index()
             .drop_duplicates()
             .sort_values("feature", ascending=False)["feature_name"]
             .tolist()
         )
-        return result_df.reindex(ordered_ft, level=0)
+        binning_df = binning_df.reindex(ordered_ft, level=0)
+
+        # Generate feature-level summary
+        summary_df = self._stat_summary(X, y, binning_df, self.missing_values)
+
+        return {"binning": binning_df, "summary": summary_df}
 
     def adjust_missing_woe(
         self,

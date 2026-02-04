@@ -45,9 +45,12 @@ class Reporter:
         >>> # Generate comprehensive model report
         >>> performance_data = {
         ...     'model_id': 'risk_model_v1',
-        ...     'sample_set': {'train': train_data, 'test': test_data},
-        ...     'label': 'default_flag',
-        ...     'woe_df': woe_results,
+        ...     'predictions': {'train': train_pred_df, 'test': test_pred_df},
+        ...     'label': 'target',
+        ...     'woe_df': {
+        ...         'train': {'binning': train_binning_df, 'summary': train_summary_df},
+        ...         'test': {'binning': test_binning_df, 'summary': test_summary_df}
+        ...     },
         ...     'feature_selection': selection_pipeline,
         ...     'calibrate_detail': calibration_metrics
         ... }
@@ -67,14 +70,6 @@ class Reporter:
     def _set_col_format(
         cls, worksheet: Worksheet, col_ids: List[str], format: str
     ) -> None:
-        """
-        Apply number formatting to specified columns in an Excel worksheet.
-
-        Args:
-            worksheet: The openpyxl worksheet object to format.
-            col_ids: List of column letters (e.g., ['A', 'B', 'C']) to format.
-            format: Excel number format string (e.g., '0.000%' for percentages).
-        """
         for col_idx in col_ids:
             for cell in worksheet[col_idx]:
                 cell.number_format = format
@@ -83,57 +78,22 @@ class Reporter:
     def _set_col_width(
         cls, worksheet: Worksheet, col_ids: List[str], width: Union[int, float]
     ) -> None:
-        """
-        Set column widths for specified columns in an Excel worksheet.
-
-        Args:
-            worksheet: The openpyxl worksheet object to modify.
-            col_ids: List of column letters (e.g., ['A', 'B', 'C']) to resize.
-            width: Column width value in Excel units.
-        """
         for col_idx in col_ids:
             worksheet.column_dimensions[col_idx].width = width
 
     def _format_overview_stats_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the sample overview statistics worksheet with appropriate styling.
-
-        Applies percentage formatting to statistical columns and sets optimal column widths
-        for readability of sample statistics including counts, percentages, and PSI values.
-
-        Args:
-            worksheet: The openpyxl worksheet containing sample overview statistics.
-        """
         perc_cols = ["C", "D", "E"]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w20 = ["A", "B", "C", "D", "E"]
         Reporter._set_col_width(worksheet, w20, 20)
 
     def _format_overview_perf_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the sample overview performance worksheet with appropriate styling.
-
-        Applies percentage formatting to performance metrics and sets optimal column widths
-        for model performance indicators including AUC, KS, Gini, and IV values.
-
-        Args:
-            worksheet: The openpyxl worksheet containing sample performance metrics.
-        """
         perc_cols = ["B", "C", "D", "E", "F", "G"]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w20 = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
         Reporter._set_col_width(worksheet, w20, 20)
 
     def _format_feat_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the feature analysis worksheet with comprehensive styling.
-
-        Applies percentage formatting to feature quality metrics and sets varied column widths
-        optimized for feature names, statistics, and analytical metrics display.
-
-        Args:
-            worksheet: The openpyxl worksheet containing feature analysis data.
-        """
         perc_cols = ["D", "F", "G", "H", "S", "U", "W", "X", "Y"]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w40 = ["A"]
@@ -165,15 +125,6 @@ class Reporter:
         Reporter._set_col_width(worksheet, w15, 10)
 
     def _format_woe_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the Weight of Evidence (WOE) binning worksheet with appropriate styling.
-
-        Applies decimal and percentage formatting to WOE metrics and sets optimal column
-        widths for feature names, bin descriptions, and statistical measures.
-
-        Args:
-            worksheet: The openpyxl worksheet containing WOE binning analysis.
-        """
         num_cols_4dec = ["N", "O", "Q"]
         perc_cols = ["D", "E", "G", "H", "I", "K", "L", "M", "P", "S", "T"]
         Reporter._set_col_format(worksheet, num_cols_4dec, "0.0000")
@@ -186,55 +137,20 @@ class Reporter:
         Reporter._set_col_width(worksheet, w15, 15)
 
     def _format_feature_selection_overview_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the feature selection overview worksheet with appropriate styling.
-
-        Sets optimal column width for feature names to accommodate long feature identifiers
-        in the feature selection summary table.
-
-        Args:
-            worksheet: The openpyxl worksheet containing feature selection overview.
-        """
         w40 = ["A"]
         Reporter._set_col_width(worksheet, w40, 40)
 
     def _format_feature_selection_df(self, worksheet: Worksheet) -> None:
-        """
-        Format individual feature selection method worksheets with appropriate styling.
-
-        Sets varied column widths optimized for feature selection criteria display,
-        including feature names and selection metrics.
-
-        Args:
-            worksheet: The openpyxl worksheet containing specific feature selection results.
-        """
         w20 = ["C", "D", "E"]
         w40 = ["B"]
         Reporter._set_col_width(worksheet, w20, 20)
         Reporter._set_col_width(worksheet, w40, 40)
 
     def _format_benchmark_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the benchmark model results worksheet with appropriate styling.
-
-        Sets uniform column widths for benchmark model comparison metrics and parameters.
-
-        Args:
-            worksheet: The openpyxl worksheet containing benchmark model details.
-        """
         w20 = ["A", "B", "C", "D", "E", "F", "G", "H"]
         Reporter._set_col_width(worksheet, w20, 20)
 
     def _format_tuning_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the hyperparameter tuning results worksheet with comprehensive styling.
-
-        Applies percentage formatting to performance metrics and sets varied column widths
-        optimized for hyperparameter names, values, and performance indicators.
-
-        Args:
-            worksheet: The openpyxl worksheet containing hyperparameter tuning results.
-        """
         perc_cols = ["P", "Q", "R", "S", "T", "U", "V", "W", "X"]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w15 = [
@@ -262,29 +178,12 @@ class Reporter:
         Reporter._set_col_width(worksheet, w40, 40)
 
     def _format_calibration_reg_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the calibration regression results worksheet with appropriate styling.
-
-        Sets varied column widths optimized for regression parameters and calibration metrics.
-
-        Args:
-            worksheet: The openpyxl worksheet containing calibration regression details.
-        """
         w15 = ["A", "B", "C", "D"]
         w20 = ["E", "F"]
         Reporter._set_col_width(worksheet, w15, 15)
         Reporter._set_col_width(worksheet, w20, 20)
 
     def _format_calibration_scorecard_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the calibration scorecard worksheet with comprehensive styling.
-
-        Applies percentage formatting to scorecard metrics and sets uniform column widths
-        for scorecard elements including score bands, population distributions, and rates.
-
-        Args:
-            worksheet: The openpyxl worksheet containing calibration scorecard data.
-        """
         perc_cols = [
             "D",
             "E",
@@ -330,30 +229,12 @@ class Reporter:
         Reporter._set_col_width(worksheet, w15, 15)
 
     def _format_calibration_scoredist_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the calibration score distribution worksheet with appropriate styling.
-
-        Applies percentage formatting to distribution metrics and sets optimal column widths
-        for score distribution analysis across different sample types.
-
-        Args:
-            worksheet: The openpyxl worksheet containing score distribution analysis.
-        """
         perc_cols = ["C", "E", "G", "I", "K", "M", "O", "Q", "S", "U"]
         Reporter._set_col_format(worksheet, perc_cols, "0.000%")
         w15 = ["C", "E", "G", "I", "K", "M", "O", "Q", "S", "U"]
         Reporter._set_col_width(worksheet, w15, 15)
 
     def _format_calibration_score_psi_df(self, worksheet: Worksheet) -> None:
-        """
-        Format the calibration score PSI worksheet with appropriate styling.
-
-        Applies percentage formatting to PSI metrics and sets optimal column widths
-        for Population Stability Index tracking and analysis.
-
-        Args:
-            worksheet: The openpyxl worksheet containing score PSI analysis.
-        """
         perc_cols = ["B"]
         Reporter._set_col_format(worksheet, perc_cols, "0.00%")
         w15 = ["B"]
@@ -370,18 +251,7 @@ class Reporter:
         title: str = "",
         dpi: int = 50,
     ) -> None:
-        """
-        Insert a matplotlib figure into an Excel worksheet.
-
-        Creates a new worksheet and embeds the figure as a PNG image.
-
-        Args:
-            writer: Excel writer object for output file generation.
-            fig: Matplotlib Figure object to insert.
-            sheet_name: Name for the new worksheet.
-            anchor: Cell anchor position for the image (default: 'A3').
-            title: Optional title to display in the sheet header.
-        """
+        # Insert matplotlib figure into Excel worksheet as PNG image
         # Create a placeholder DataFrame for the sheet
         header_text = title if title else sheet_name
         pd.DataFrame({sheet_name: [header_text]}).to_excel(
@@ -398,176 +268,8 @@ class Reporter:
         img.anchor = anchor
         worksheet.add_image(img)
 
-    def _stat_feat(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        woe_df: pd.DataFrame,
-        missing_values: List[Any],
-    ) -> pd.DataFrame:
-        """
-        Generate comprehensive feature statistics and quality metrics.
-
-        Analyzes each feature in the dataset to provide detailed statistics including
-        missing value rates, bad rates, descriptive statistics for numerical features,
-        mode analysis for categorical features, and WOE-derived metrics.
-
-        Statistical Metrics Calculated:
-        - **Missing Value Analysis**: Count and percentage of missing values
-        - **Bad Rate Analysis**: Target rate with and without missing values
-        - **Uniqueness Metrics**: Unique value counts with/without missing values
-        - **Numerical Statistics**: Min, max, mean, percentiles, standard deviation, CV
-        - **Zero Analysis**: Count and percentage of zero values (numerical features)
-        - **Mode Analysis**: Top 3 most frequent values and their rates
-        - **WOE Metrics**: KS and IV values from Weight of Evidence analysis
-
-        Args:
-            X: Feature dataset with all input variables for analysis.
-            y: Target variable (binary) for bad rate calculations.
-            woe_df: Weight of Evidence DataFrame containing KS and IV metrics by feature.
-            missing_values: List of values to be treated as missing (e.g., [None, np.nan, -999]).
-
-        Returns:
-            Comprehensive feature statistics DataFrame with the following columns:
-                - Basic counts: total, #missing, %missing, #zero, %zero
-                - Bad rates: with/without missing values
-                - Uniqueness: unique counts with/without missing values
-                - Descriptive stats: min, 25%, mean, 75%, max, std, cva
-                - Mode analysis: mode, mode_rate, second_mode, second_mode_rate, third_mode, third_mode_rate
-                - WOE metrics: KS, IV values from binning analysis
-
-        Example:
-            >>> # Analyze feature quality
-            >>> missing_vals = [None, np.nan, -999, '']
-            >>> feature_stats = reporter._stat_feat(X_train, y_train, woe_results, missing_vals)
-            >>> print(feature_stats[['%missing', 'Bad Rate (without missing)', 'KS', 'IV']])
-        """
-        feature_summaries = []
-        for column in X.columns:
-            total = len(X)
-            missing = X[column].apply(lambda x: x in missing_values).sum()
-            unique = X[column].nunique()
-            unique_without_missing = X.loc[
-                X[column].apply(lambda x: x not in missing_values), column
-            ].nunique()
-            bad_rate_with_missing = y.mean()
-            bad_rate_without_missing = y[
-                X[column].apply(lambda x: x not in missing_values)
-            ].mean()
-
-            X_normal = X.loc[X[column].apply(lambda x: x not in missing_values)]
-            mode = (
-                X_normal[column].mode().iloc[0]
-                if len(X_normal[column].mode()) > 0
-                else None
-            )
-            mode_rate = (X_normal[column] == mode).mean()
-            second_mode = (
-                X_normal[column].value_counts().index[1]
-                if len(X_normal[column].value_counts()) > 1
-                else None
-            )
-            second_mode_rate = (
-                (X_normal[column] == second_mode).mean() if second_mode else None
-            )
-            third_mode = (
-                X_normal[column].value_counts().index[2]
-                if len(X_normal[column].value_counts()) > 2
-                else None
-            )
-            third_mode_rate = (
-                (X_normal[column] == third_mode).mean() if third_mode else None
-            )
-
-            # for numerical features
-            is_numerical = is_numeric_dtype(X_normal[column])
-            desc_stats = X_normal[column].describe() if is_numerical else None
-            stats_min = desc_stats["min"] if is_numerical else None
-            stats_25 = desc_stats["25%"] if is_numerical else None
-            stats_mean = desc_stats["mean"] if is_numerical else None
-            stats_75 = desc_stats["75%"] if is_numerical else None
-            stats_max = desc_stats["max"] if is_numerical else None
-            stats_std = desc_stats["std"] if is_numerical else None
-            zero = (X_normal[column] == 0).sum() if is_numerical else None
-            zero_rate = zero / total if is_numerical else None
-            cva = stats_std / stats_mean if is_numerical else None
-
-            feature_summary = {
-                "Feature": column,
-                "total": total,
-                "#missing": missing,
-                "%missing": missing / total,
-                "#zero": zero,
-                "%zero": zero_rate,
-                "Bad Rate (with missing)": bad_rate_with_missing,
-                "Bad Rate (without missing)": bad_rate_without_missing,
-                "Unique (with missing)": unique,
-                "Unique (without missing)": unique_without_missing,
-                "min": stats_min,
-                "25%": stats_25,
-                "mean": stats_mean,
-                "75%": stats_75,
-                "max": stats_max,
-                "std": stats_std,
-                "cva": cva,
-                "mode": mode,
-                "mode_rate": mode_rate,
-                "second_mode": second_mode,
-                "second_mode_rate": second_mode_rate,
-                "third_mode": third_mode,
-                "third_mode_rate": third_mode_rate,
-            }
-
-            feature_summaries.append(feature_summary)
-
-        summary_df = pd.DataFrame(feature_summaries).set_index("Feature")
-        return pd.concat(
-            [
-                summary_df,
-                woe_df[["KS", "IV"]]
-                .reset_index()
-                .groupby("feature_name")
-                .agg(KS=(("KS", ""), "max"), IV=(("IV", "bin"), "sum")),
-            ],
-            axis=1,
-        )
-
     def _stat_perf(self, gp: pd.DataFrame, target_label: str) -> pd.DataFrame:
-        """
-        Calculate comprehensive performance statistics for model predictions.
-
-        Computes key performance metrics including AUC, KS, Gini, and IV for both
-        benchmark and main model predictions. Handles edge cases where target
-        variable has only one unique value.
-
-        Performance Metrics:
-        - **AUC (Area Under Curve)**: Discrimination ability measure (0.5-1.0)
-        - **KS (Kolmogorov-Smirnov)**: Maximum separation between distributions
-        - **Gini Coefficient**: Concentration measure derived from AUC
-        - **IV (Information Value)**: Predictive power indicator
-
-        Args:
-            gp: DataFrame containing predictions and actual target values with columns:
-                - target_label: Actual binary target variable
-                - 'bm_proba': Benchmark model probability predictions
-                - 'proba': Main model probability predictions
-            target_label: Column name of the target variable in the DataFrame.
-
-        Returns:
-            Performance metrics DataFrame with columns:
-                - BM_AUC, BM_KS: Benchmark model performance metrics
-                - AUC, KS, Gini, IV: Main model performance metrics
-                Returns None values if target has only one unique value.
-
-        Example:
-            >>> # Calculate performance for validation set
-            >>> val_predictions = pd.DataFrame({
-            ...     'default_flag': [0, 1, 0, 1, 0],
-            ...     'bm_proba': [0.1, 0.8, 0.2, 0.9, 0.15],
-            ...     'proba': [0.05, 0.85, 0.25, 0.95, 0.1]
-            ... })
-            >>> perf_stats = reporter._stat_perf(val_predictions, 'default_flag')
-        """
+        # Calculate AUC, KS, Gini, IV metrics for benchmark and main model predictions
         y_true = gp[target_label]
         y_bm_proba = gp["bm_proba"]
         y_proba = gp["proba"]
@@ -594,21 +296,12 @@ class Reporter:
         )
 
     def _generate_sample_overview_basic(
-        self, writer: pd.ExcelWriter, sample_set: Dict[str, Dict[str, Any]]
+        self, writer: pd.ExcelWriter, predictions: Dict[str, pd.DataFrame]
     ) -> None:
-        """
-        Generate basic sample overview (no score/performance required).
-
-        Creates a simple worksheet with sample sizes and bad rates.
-        Used when model scores are not yet available (e.g., preprocessor stage).
-
-        Args:
-            writer: Excel writer object for output file generation.
-            sample_set: Dictionary containing sample data with 'X' and 'y' keys.
-        """
+        # Generate basic sample statistics (size, bad rate) without model performance metrics
         sample_stats = []
-        for sample_type, sample in sample_set.items():
-            y = sample["y"]
+        for sample_type, pred_df in predictions.items():
+            y = pred_df["target"]
             sample_stats.append(
                 {
                     "sample_type": sample_type,
@@ -624,7 +317,7 @@ class Reporter:
         )
 
     def generate_sample_overview_report(
-        self, writer: pd.ExcelWriter, sample_set: Dict[str, Dict[str, Any]], label: str
+        self, writer: pd.ExcelWriter, predictions: Dict[str, pd.DataFrame], label: str
     ) -> None:
         """
         Generate comprehensive sample overview report with statistics and performance metrics.
@@ -635,26 +328,21 @@ class Reporter:
 
         Args:
             writer: Excel writer object for output file generation.
-            sample_set: Dictionary containing sample data with structure:
-                {'train': {'e': extended_df, 'X': features, 'y': target},
-                 'test': {'e': extended_df, 'X': features, 'y': target}, ...}
-                The 'e' DataFrame must contain 'sample_type' and 'score' columns.
+            predictions: Dictionary containing prediction DataFrames by sample type.
+                Each DataFrame must contain 'sample_type' and 'score' columns.
             label: Target variable column name for bad rate calculations.
 
         Raises:
-            KeyError: If required columns ('sample_type', 'score') are missing from sample data.
-            ValueError: If sample_set structure is invalid or empty.
+            KeyError: If required columns ('sample_type', 'score') are missing from predictions.
+            ValueError: If predictions structure is invalid or empty.
 
         Example:
             >>> # Generate sample overview
-            >>> sample_data = {
-            ...     'train': {'e': train_extended, 'X': X_train, 'y': y_train},
-            ...     'test': {'e': test_extended, 'X': X_test, 'y': y_test}
-            ... }
+            >>> predictions = {'train': train_pred_df, 'test': test_pred_df}
             >>> with pd.ExcelWriter('report.xlsx') as writer:
-            ...     reporter.generate_sample_overview_report(writer, sample_data, 'default_flag')
+            ...     reporter.generate_sample_overview_report(writer, predictions, 'target')
         """
-        df_extra = pd.concat([sample["e"] for _, sample in sample_set.items()])
+        df_extra = pd.concat([pred_df for _, pred_df in predictions.items()])
         df_basic_summary = df_extra.groupby("sample_type").agg(
             sample_size=("sample_type", "size"),
             sample_size_pct=("sample_type", lambda x: x.size / df_extra.shape[0]),
@@ -676,10 +364,7 @@ class Reporter:
     def generate_single_feature_eda_report(
         self,
         writer: pd.ExcelWriter,
-        X: pd.DataFrame,
-        y: pd.Series,
-        woe_df: pd.DataFrame,
-        missing_values: List[Any],
+        woe_data: Dict[str, pd.DataFrame],
         prefix: str = "",
     ) -> None:
         """
@@ -691,33 +376,30 @@ class Reporter:
 
         Args:
             writer: Excel writer object for output file generation.
-            X: Feature dataset for analysis.
-            y: Target variable for bad rate and correlation analysis.
-            woe_df: Weight of Evidence DataFrame containing binning results with KS and IV metrics.
-            missing_values: List of values to treat as missing (e.g., [None, np.nan, -999]).
+            woe_data: Dictionary containing:
+                - 'binning': Bin-level WOE DataFrame with KS and IV metrics
+                - 'summary': Feature-level statistics DataFrame
             prefix: Optional prefix for worksheet names (e.g., "Train", "Test").
 
         Raises:
-            AssertionError: If number of features in X doesn't match unique features in woe_df.
-            ValueError: If woe_df doesn't contain required columns or structure.
+            KeyError: If woe_data doesn't contain required keys ('binning', 'summary').
+            ValueError: If DataFrames don't contain required columns or structure.
 
         Example:
             >>> # Generate feature EDA report
-            >>> missing_vals = [None, np.nan, -999]
+            >>> woe_data = encoder.get_woe_df(X_train, y_train)
             >>> with pd.ExcelWriter('feature_analysis.xlsx') as writer:
             ...     reporter.generate_single_feature_eda_report(
-            ...         writer, X_train, y_train, woe_results, missing_vals, "Train"
+            ...         writer, woe_data, "Train"
             ...     )
         """
-        feature_names = woe_df.reset_index()["feature_name"].unique().tolist()
-        assert X.shape[1] == len(
-            feature_names
-        ), f"The number of feature dataframe columns ({X.shape[1]}) is not match the woe_df ({len(feature_names)})!"
-        feat_df = self._stat_feat(X, y, woe_df, missing_values)
-        feat_df.to_excel(
+        binning_df = woe_data["binning"]
+        summary_df = woe_data["summary"]
+
+        summary_df.to_excel(
             writer, sheet_name=f"{prefix} - Feature Overview", freeze_panes=(1, 1)
         )
-        woe_df.to_excel(
+        binning_df.to_excel(
             writer, sheet_name=f"{prefix} - Feature Binning Report", freeze_panes=(3, 2)
         )
         self._format_feat_df(writer.sheets[f"{prefix} - Feature Overview"])
@@ -1059,57 +741,51 @@ class Reporter:
         Generate comprehensive model performance report with all analysis components.
 
         Creates a complete Excel report containing all available analysis sections
-        based on the provided performance data. Use eda_only=True for lightweight
-        EDA-only reports at preprocessor stage (no model scores required).
+        based on the provided performance data. Automatically detects whether to generate
+        EDA-only or full model report based on the presence of 'label' key.
 
         Report Sections Generated (based on available data):
         - **Sample Overview**: Always generated
-            - Full version (with PSI/Performance) if eda_only=False
-            - Basic version (sizes/bad rates only) if eda_only=True
+            - Full version (with PSI/Performance) if 'label' is provided
+            - Basic version (sizes/bad rates only) if 'label' is not provided
         - **Feature Analysis**: Generated if 'woe_df' provided
         - **Feature Selection**: Generated if 'feature_selection' provided
-        - **Benchmark Model**: Generated if 'benchmark' provided (eda_only=False)
-        - **Model Tuning**: Generated if 'tune_results' provided (eda_only=False)
-        - **Calibration Analysis**: Generated if calibration data provided (eda_only=False)
+        - **Benchmark Model**: Generated if 'benchmark_detail' provided
+        - **Model Tuning**: Generated if 'tune_results' provided
+        - **Calibration Analysis**: Generated if calibration data provided
 
         Args:
             performance: Dictionary containing model performance data:
                 Required:
-                - **sample_set** (Dict): Sample data with 'train', 'test', etc. keys
-                    Each sample must have 'X' and 'y'. Optionally 'e' for extended info.
+                - **predictions** (Dict): Prediction results by sample type
+                    Each sample is a DataFrame with predictions and scores
 
-                Required for eda_only=False:
-                - **label** (str): Target column name in 'e' DataFrame.
+                Required for full report:
+                - **label** (str): Target column name in predictions DataFrame
+                    If not provided, generates EDA-only report
 
                 Optional:
-                - **woe_df** (Dict): WOE analysis by sample type
+                - **woe_df** (Dict): WOE analysis by sample type, each containing
+                    {'binning': bin_df, 'summary': summary_df}
                 - **missing_values** (List): Values to treat as missing (default: [])
                 - **feature_selection**: Feature selection pipeline results
-                - **benchmark**: Benchmark model analysis
+                - **benchmark_detail**: Benchmark model analysis
                 - **tune_results** (DataFrame): Hyperparameter tuning results
                 - **calibrate_detail** (DataFrame): Calibration regression details
                 - **scorecard** (Dict): Scorecard analysis by sample
                 - **scoredist** (Dict): Score distribution and PSI analysis
-            **kwargs: Additional keyword arguments, including eda_only (bool, False by default).
+            **kwargs: Additional keyword arguments (for future extensibility).
 
         Output:
             Creates Excel file at self.report_file_name
 
         Example:
-            >>> # EDA-only report (preprocessor stage)
-            >>> reporter.generate_report({
-            ...     'sample_set': {'train': {'X': X_train, 'y': y_train},
-            ...                    'test': {'X': X_test, 'y': y_test}},
-            ...     'woe_df': {'train': train_woe, 'test': test_woe},
-            ...     'missing_values': [-999999],
-            ... }, eda_only=True)
-
             >>> # Full report with model scores
             >>> reporter.generate_report({
-            ...     'sample_set': {'train': {'X': X_train, 'y': y_train, 'e': train_ext},
-            ...                    'test': {'X': X_test, 'y': y_test, 'e': test_ext}},
+            ...     'predictions': {'train': train_pred_df, 'test': test_pred_df},
             ...     'label': 'default_flag',
-            ...     'woe_df': {'train': train_woe, 'test': test_woe},
+            ...     'woe_df': {'train': {'binning': train_bin, 'summary': train_sum},
+            ...                'test': {'binning': test_bin, 'summary': test_sum}},
             ...     'missing_values': [-999999],
             ...     'feature_selection': preprocessor.named_steps,
             ...     'benchmark': benchmark_results,
@@ -1123,27 +799,23 @@ class Reporter:
             engine="openpyxl",
         )
 
-        sample_set = performance["sample_set"]
+        predictions = performance["predictions"]
 
         # Sample Overview
-        if kwargs.get("eda_only", False):
-            self._generate_sample_overview_basic(writer, sample_set)
-        else:
+        if "label" in performance:
             self.generate_sample_overview_report(
-                writer, sample_set, performance["label"]
+                writer, predictions, performance["label"]
             )
+        else:
+            self._generate_sample_overview_basic(writer, predictions)
 
         # Feature EDA
         if "woe_df" in performance:
-            missing_values = performance.get("missing_values", [])
-            for sample_type, woe_df in performance["woe_df"].items():
-                if sample_type in sample_set:
+            for sample_type, woe_data in performance["woe_df"].items():
+                if sample_type in predictions:
                     self.generate_single_feature_eda_report(
                         writer,
-                        sample_set[sample_type]["X"],
-                        sample_set[sample_type]["y"],
-                        woe_df,
-                        missing_values,
+                        woe_data,
                         sample_type,
                     )
 

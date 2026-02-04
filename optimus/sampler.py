@@ -207,7 +207,7 @@ class ImbalanceSampler(BaseEstimator, TransformerMixin):
         return X_resampled, y_resampled
 
     def _combined(self, X_min, y_min, X_maj, y_maj):
-        """Combined under-sampling and over-sampling."""
+        # Combined under-sampling and over-sampling
         n_minority = len(X_min)
         intermediate_ratio = self.target_ratio * 0.5
         n_majority_intermediate = int(n_minority / intermediate_ratio) - n_minority

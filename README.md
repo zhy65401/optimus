@@ -185,11 +185,12 @@ encoder = Encoder(
     treat_missing='mean'            # Missing value handling strategy
 )
 
-# Transform data and automatically generate WOE report when y is provided
+# Transform data and automatically generate WOE report
 X_encoded = encoder.fit_transform(X, y)
 
-# Access WOE analysis report (automatically generated)
-woe_report = encoder.woe_df
+# Access WOE analysis report (automatically generated during fit)
+# woe_df is a dict with 'binning' and 'summary' DataFrames
+woe_report = encoder.woe_df  # {'binning': df_binning, 'summary': df_summary}
 ```
 
 ### Feature Selection
@@ -459,16 +460,13 @@ scores = calibrator.transform(y_prob)
 # 7. Report generation
 reporter = Reporter('credit_model_report.xlsx')
 performance_data = {
-    'sample_set': {
-        'test': {
-            'X': X_test,
-            'y': y_test,
-            'e': pd.DataFrame({
-                'sample_type': ['test'] * len(X_test),
-                'proba': y_prob,
-                'score': scores
-            })
-        }
+    'predictions': {
+        'test': pd.DataFrame({
+            'sample_type': ['test'] * len(X_test),
+            'target': y_test,
+            'proba': y_prob,
+            'score': scores
+        })
     },
     'model_id': '20241201_143022',
     'label': 'target',
@@ -591,7 +589,7 @@ model_tuner = model_builder.build_model()
 - **PSI Calculation Fix**: Corrected Population Stability Index calculation for accurate distribution comparisons
 - **Extended Documentation**: Added detailed function documentation and usage examples for all major components
 - **Flexible Sample Types**: Support for custom sample types beyond train/test for comprehensive model evaluation
-- **Encoder Code Simplification**: Merged `get_woe_df()` functionality into `transform()` method - when target variable `y` is provided, WOE DataFrame is automatically generated and stored in `self.woe_df`, eliminating the need for separate method calls
+- **Encoder Code Simplification**: WOE DataFrame is automatically generated during `fit()` and stored in `self.woe_df` as a dict with 'binning' and 'summary' keys. The `get_woe_df()` method remains available for generating WOE analysis on new datasets.
 
 ### v0.2.0 (Previous Version)
 - **New Feature**: Integrated OptimalBinning algorithm into binner

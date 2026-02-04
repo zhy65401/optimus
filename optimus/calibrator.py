@@ -476,24 +476,7 @@ class PlattCalibrator(TransformerMixin):
         strategy: str = "uniform",
         title: str = "Calibration Curve (Before vs After)",
     ) -> plt.Figure:
-        """
-        Generate a calibration plot showing before and after calibration curves.
-
-        Uses sklearn's CalibrationDisplay to plot calibration curves. The plot shows
-        two curves: one for the original predictions (blue) and one for the calibrated
-        predictions (orange), along with the perfect calibration diagonal.
-
-        Args:
-            y_true: True binary labels.
-            y_prob_before: Predicted probabilities before calibration.
-            y_prob_after: Predicted probabilities after calibration.
-            n_bins: Number of bins for the calibration curve (default: 10).
-            strategy: Strategy for binning - 'uniform' or 'quantile' (default: 'uniform').
-            title: Title for the plot (default: 'Calibration Curve (Before vs After)').
-
-        Returns:
-            matplotlib.figure.Figure: The calibration plot figure.
-        """
+        # Generate calibration plot comparing before/after curves using sklearn's CalibrationDisplay
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # Plot before calibration curve (blue)
@@ -948,24 +931,7 @@ class IsotonicCalibrator(TransformerMixin):
         strategy: str = "uniform",
         title: str = "Isotonic Calibration Curve (Before vs After)",
     ) -> plt.Figure:
-        """
-        Generate a calibration plot showing before and after calibration curves.
-
-        Uses sklearn's CalibrationDisplay to plot calibration curves. The plot shows
-        two curves: one for the original predictions (blue) and one for the calibrated
-        predictions (orange), along with the perfect calibration diagonal.
-
-        Args:
-            y_true: True binary labels.
-            y_prob_before: Predicted probabilities before calibration.
-            y_prob_after: Predicted probabilities after calibration.
-            n_bins: Number of bins for the calibration curve (default: 10).
-            strategy: Strategy for binning - 'uniform' or 'quantile' (default: 'uniform').
-            title: Title for the plot.
-
-        Returns:
-            matplotlib.figure.Figure: The calibration plot figure.
-        """
+        # Generate calibration plot comparing before/after curves using sklearn's CalibrationDisplay
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # Plot before calibration curve (blue)
@@ -1275,7 +1241,6 @@ class IsotonicCalibrator(TransformerMixin):
 
     @classmethod
     def __check_type(cls, data):
-        """Convert various input types to list."""
         if isinstance(data, (list, pd.Series, np.ndarray)):
             lst_data = list(data)
         elif isinstance(data, pd.DataFrame):
