@@ -30,7 +30,7 @@ class Reporter:
     - **Sample Overview**: Statistical summaries and performance metrics across samples
     - **Feature Analysis**: Detailed feature statistics, WOE binning, and quality metrics
     - **Feature Selection**: Documentation of feature selection pipeline and criteria
-    - **Model Performance**: Benchmark comparisons and hyperparameter tuning results
+    - **Model Performance**: Hyperparameter tuning results and feature importance
     - **Calibration Analysis**: Score distribution, PSI tracking, and scorecard generation
     - **Professional Formatting**: Automatic Excel formatting with proper column widths and number formats
 
@@ -145,10 +145,6 @@ class Reporter:
         w40 = ["B"]
         Reporter._set_col_width(worksheet, w20, 20)
         Reporter._set_col_width(worksheet, w40, 40)
-
-    def _format_benchmark_df(self, worksheet: Worksheet) -> None:
-        w20 = ["A", "B", "C", "D", "E", "F", "G", "H"]
-        Reporter._set_col_width(worksheet, w20, 20)
 
     def _format_tuning_df(self, worksheet: Worksheet) -> None:
         perc_cols = ["P", "Q", "R", "S", "T", "U", "V", "W", "X"]
@@ -269,16 +265,13 @@ class Reporter:
         worksheet.add_image(img)
 
     def _stat_perf(self, gp: pd.DataFrame, target_label: str) -> pd.DataFrame:
-        # Calculate AUC, KS, Gini, IV metrics for benchmark and main model predictions
+        # Calculate AUC, KS, Gini, IV metrics for main model predictions
         y_true = gp[target_label]
-        y_bm_proba = gp["bm_proba"]
         y_proba = gp["proba"]
         if y_true.nunique() == 1:
             return pd.DataFrame(
                 {
-                    "BM_AUC": [None],
                     "AUC": [None],
-                    "BM_KS": [None],
                     "KS": [None],
                     "Gini": [None],
                     "IV": [None],
@@ -286,9 +279,7 @@ class Reporter:
             )
         return pd.DataFrame(
             {
-                "BM_AUC": [Metrics.get_auc(y_true, y_bm_proba)],
                 "AUC": [Metrics.get_auc(y_true, y_proba)],
-                "BM_KS": [Metrics.get_ks(y_true, y_bm_proba)],
                 "KS": [Metrics.get_ks(y_true, y_proba)],
                 "Gini": [Metrics.get_gini(y_true, y_proba)],
                 "IV": [Metrics.get_iv(y_true, y_proba)],
@@ -525,31 +516,6 @@ class Reporter:
                     writer.sheets[f"Feature Selection - {name}"]
                 )
 
-    def generate_benchmark_report(
-        self, writer: pd.ExcelWriter, benchmark_detail: pd.DataFrame
-    ) -> None:
-        """
-        Generate benchmark model analysis report.
-
-        Creates detailed analysis of the benchmark model including model parameters,
-        performance metrics, and comparison baseline for main model evaluation.
-
-        Args:
-            writer: Excel writer object for output file generation.
-            benchmark_detail: Benchmark model details DataFrame.
-
-        Example:
-            >>> # Generate benchmark report
-            >>> with pd.ExcelWriter('benchmark_analysis.xlsx') as writer:
-            ...     reporter.generate_benchmark_report(writer, benchmark_detail)
-        """
-        if benchmark_detail is None:
-            return
-        benchmark_detail.to_excel(
-            writer, sheet_name="Model - Benchmark Details", freeze_panes=(1, 1)
-        )
-        self._format_benchmark_df(writer.sheets["Model - Benchmark Details"])
-
     def generate_model_tuning_report(
         self, writer: pd.ExcelWriter, tune_results: Optional[pd.DataFrame]
     ) -> None:
@@ -750,7 +716,6 @@ class Reporter:
             - Basic version (sizes/bad rates only) if 'label' is not provided
         - **Feature Analysis**: Generated if 'woe_df' provided
         - **Feature Selection**: Generated if 'feature_selection' provided
-        - **Benchmark Model**: Generated if 'benchmark_detail' provided
         - **Model Tuning**: Generated if 'tune_results' provided
         - **Calibration Analysis**: Generated if calibration data provided
 
@@ -769,7 +734,6 @@ class Reporter:
                     {'binning': bin_df, 'summary': summary_df}
                 - **missing_values** (List): Values to treat as missing (default: [])
                 - **feature_selection**: Feature selection pipeline results
-                - **benchmark_detail**: Benchmark model analysis
                 - **tune_results** (DataFrame): Hyperparameter tuning results
                 - **calibrate_detail** (DataFrame): Calibration regression details
                 - **scorecard** (Dict): Scorecard analysis by sample
@@ -788,7 +752,6 @@ class Reporter:
             ...                'test': {'binning': test_bin, 'summary': test_sum}},
             ...     'missing_values': [-999999],
             ...     'feature_selection': preprocessor.named_steps,
-            ...     'benchmark': benchmark_results,
             ...     'calibrate_detail': calib_df,
             ...     'scorecard': scorecard_dict,
             ...     'scoredist': scoredist_dict,
@@ -824,10 +787,6 @@ class Reporter:
             self.generate_feature_selection_report(
                 writer, performance["feature_selection"]
             )
-
-        # Benchmark
-        if "benchmark_detail" in performance:
-            self.generate_benchmark_report(writer, performance["benchmark_detail"])
 
         # Model Tuning
         if "tune_results" in performance:

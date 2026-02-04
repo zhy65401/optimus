@@ -166,4 +166,5 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
-demo_models
+demo
+demo.ipynb

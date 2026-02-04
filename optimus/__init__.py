@@ -15,7 +15,6 @@ This package provides comprehensive tools for:
 from .binner import BestKSCut, ChiMergeCut, OptimalCut, QCut, SimpleCut, WOEMerge
 from .calibrator import IsotonicCalibrator, PlattCalibrator
 from .encoder import Encoder
-from .estimator import Benchmark
 
 # Feature selection classes
 from .feature_selection import (
@@ -52,7 +51,6 @@ __all__ = [
     "PlattCalibrator",
     "Preprocess",
     "Model",
-    "Benchmark",
     "Reporter",
     # Feature selection
     "CorrSelector",

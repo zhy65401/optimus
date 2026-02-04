@@ -6,7 +6,6 @@ from sklearn.base import clone
 from termcolor import cprint
 
 from .encoder import Encoder
-from .estimator import Benchmark
 from .feature_selection import (
     BoostingTreeSelector,
     CorrSelector,
@@ -114,7 +113,7 @@ class Preprocess:
                 treat_missing (str): Strategy for handling missing values in WOE encoding.
                     Options: 'mean', 'min', 'max', 'zero'. Default: 'mean'
                 ignore_preprocessors (list): List of preprocessor names to skip during pipeline building.
-                    Options: ['Impute', 'WOE', 'Original', 'Manual', 'IV', 'PSI', 'Gini', 'Corr', 'VIF', 'Boosting', 'Benchmark']. Default: []
+                    Options: ['Impute', 'WOE', 'Original', 'Manual', 'IV', 'PSI', 'Gini', 'Corr', 'VIF', 'Boosting']. Default: []
                 drop_features (list): List of feature names to manually drop before preprocessing.
                     These features will be excluded from the entire pipeline. Default: []
 
@@ -214,8 +213,6 @@ class Preprocess:
                 ("Stability", StabilitySelector(threshold=self.stability_threshold)),
             ]
         )
-        # Note: Benchmark is no longer part of Preprocess pipeline
-        # It's now handled separately in Train class
         steps = [
             (name, transformer)
             for name, transformer in all_steps
@@ -349,7 +346,6 @@ class Model:
     - **LR**: Logistic Regression with regularization tuning
     - **XGB**: XGBoost with tree-based parameters
     - **LGBM**: LightGBM with gradient boosting parameters
-    - **BM**: Benchmark model (simple logistic regression)
 
     Tuning Methods:
     - **BO**: Bayesian Optimization for efficient parameter search
@@ -396,7 +392,6 @@ class Model:
                 - 'LR': Logistic Regression
                 - 'XGB': XGBoost Classifier
                 - 'LGBM': LightGBM Classifier (default)
-                - 'BM': Benchmark Model (simple logistic regression)
             tune_method: Hyperparameter tuning method. Options:
                 - 'BO': Bayesian Optimization (default, recommended for efficiency)
                 - 'GS': Grid Search (exhaustive but slower)
@@ -447,12 +442,11 @@ class Model:
 
         This method creates the appropriate model instance based on the specified model_type.
         For tunable models (LR, XGB, LGBM), it returns a hyperparameter tuner that can be
-        used to find optimal parameters. For benchmark models, it returns a ready-to-use model.
+        used to find optimal parameters.
 
         Model Creation Logic:
         - **'LR', 'XGB', 'LGBM'**: Returns tuning object (GridSearch or BO) configured
           with the appropriate parameter search space
-        - **'BM'**: Returns Benchmark logistic regression model with predefined settings
         - **Custom Model**: Returns user-provided model instance
 
         Args:
@@ -463,7 +457,6 @@ class Model:
             Model instance ready for training:
                 - **GridSearch or BO tuner**: For 'LR', 'XGB', 'LGBM' models.
                   Use tuner.fit(X_train, y_train, X_val, y_val) to get optimized model.
-                - **Benchmark model**: For 'BM' type. Ready for direct fit/predict.
                 - **User model**: Custom model instance if provided.
 
         Examples:
@@ -471,11 +464,6 @@ class Model:
             >>> model_builder = Model(model_type='XGB', tune_method='BO', max_evals=100)
             >>> tuner = model_builder.build_model()
             >>> best_model = tuner.fit(X_train, y_train, X_val, y_val)
-
-            >>> # Build benchmark model
-            >>> model_builder = Model(model_type='BM')
-            >>> benchmark = model_builder.build_model()
-            >>> benchmark.fit(X_train, y_train)
 
             >>> # Use custom model
             >>> from sklearn.ensemble import RandomForestClassifier
@@ -485,8 +473,4 @@ class Model:
         """
         if user_model:
             return user_model
-        if self.model_type == "BM":
-            return Benchmark(
-                positive_coef=False, remove_method="iv", pvalue_threshold=0.05
-            )
         return self.tunner

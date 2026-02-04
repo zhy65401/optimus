@@ -8,7 +8,6 @@ import pandas as pd
 from termcolor import cprint
 
 from .calibrator import IsotonicCalibrator, PlattCalibrator
-from .estimator import Benchmark
 from .metrics import Metrics
 from .pipeliner import Model, Preprocess, _DefaultParams
 from .reporter import Reporter
@@ -169,6 +168,7 @@ class Train:
         self.score_floor = score_floor
         self.scale_threshold = scale_threshold
 
+        self._artifacts = {}
         # Preprocessing arguments
         self.corr_threshold = kwargs.get(
             "corr_threshold", _DefaultParams.corr_threshold.value
@@ -196,7 +196,7 @@ class Train:
         self.ignore_preprocessors = kwargs.get("ignore_preprocessors", [])
         self.drop_features = kwargs.get("drop_features", [])
 
-        self.score_bins = kwargs.get("score_bins")
+        self.score_bins = kwargs.get("score_bins", 10)
         self.sample_types = kwargs.get("sample_types", ["train", "test"])
 
     def fit(self, X: pd.DataFrame, y: pd.Series, e: pd.DataFrame):
@@ -299,14 +299,6 @@ class Train:
             self.dump_artifacts()
             return self
 
-        # Fit Benchmark model (baseline logistic regression for comparison)
-        # Note: Benchmark does NOT modify train_set, it's just a baseline model
-        benchmark = Benchmark(
-            positive_coef=False, remove_method="iv", pvalue_threshold=0.05
-        )
-        benchmark.fit(train_set, trainy)
-        self._artifacts["benchmark"] = benchmark
-
         # Train main model on the same feature set (after preprocessing)
         model_generator = Model(
             model_type=self.model_type,
@@ -406,13 +398,12 @@ class Train:
         if not os.path.exists(model_dir):
             raise FileNotFoundError(f"Model directory {model_dir} does not exist.")
 
-        if self._artifacts is None:
+        if self._artifacts == {}:
             artifact_names = [
                 "preprocessor",
                 "model",
                 "calibrator",
                 "tuner",
-                "benchmark",
             ]
             for name in artifact_names:
                 artifact_path = os.path.join(model_dir, name)
@@ -425,7 +416,6 @@ class Train:
         model = self._artifacts["model"]
         calibrator = self._artifacts["calibrator"]
         tuner = self._artifacts["tuner"]
-        benchmark = self._artifacts["benchmark"]
 
         label = y.name
         predictions = {}
@@ -448,8 +438,6 @@ class Train:
                     X_, y_
                 )
 
-            # Use separate benchmark model (no longer part of preprocess_pipe)
-            bm_proba = benchmark.predict_proba(transX)[:, 1]
             proba = model.predict_proba(transX)[:, 1]
             score = calibrator.transform(proba)
 
@@ -458,7 +446,6 @@ class Train:
                     score, y_, bins=self.score_bins
                 )
 
-            e_.loc[:, "bm_proba"] = [round(i, 6) for i in bm_proba]
             e_.loc[:, "proba"] = [round(i, 6) for i in proba]
             e_.loc[:, "score"] = [round(i, 6) for i in score]
             e_.loc[:, "score_bin"] = pd.cut(e_["score"], bins=self.score_bins)
@@ -531,8 +518,6 @@ class Train:
         )
         df_psi = df_psi.sort_values("% Score PSI")
 
-        # Benchmark is now separate from preprocess_pipe
-        benchmark_detail = benchmark.model_detail
         fs_steps = {
             name: step
             for name, step in preprocess_pipe.named_steps.items()
@@ -566,7 +551,6 @@ class Train:
             "missing_values": self.missing_values,
             "label": label,
             "feature_selection": fs_steps,
-            "benchmark_detail": benchmark_detail,
             "tune_results": tuner.results,
             "best_params": tuner.best_params if hasattr(tuner, "best_params") else None,
             "feature_importance": feature_importance,
@@ -587,7 +571,7 @@ class Train:
         """
         Save all trained model artifacts to disk.
 
-        Saves model components (preprocessor, model, calibrator, tuner, benchmark)
+        Saves model components (preprocessor, model, calibrator, tuner)
         to the model directory using joblib serialization.
 
         The artifacts are saved to: {model_path}/{timestamp}/{artifact_name}
@@ -683,13 +667,14 @@ class Train:
         params: Optional[Dict[str, Any]] = None,
     ):
         """
-        Retrain model with different hyperparameters from tuning results.
+        Retrain model with different hyperparameters and replace artifacts in the original directory.
 
         Loads a previously trained model and refits it with either:
         - Hyperparameters from a specific trial index in the tuning results, or
         - Custom hyperparameters provided directly
 
-        The refitted model replaces the original model artifact in the model directory.
+        The refitted model and calibrator will replace the original artifacts in the ts directory.
+        After refitting, use transform() with the same ts to regenerate performance metrics.
 
         Args:
             ts: Timestamp of the original trained model to refit
@@ -706,10 +691,13 @@ class Train:
         Example:
             >>> # Refit using 5th trial from tuning results
             >>> trainer.refit_model(ts='20241201_143022', trial_index=5)
+            >>> # Then regenerate performance
+            >>> performance = trainer.transform(X, y, e, ts='20241201_143022')
             >>>
             >>> # Refit with custom parameters
             >>> custom_params = {'max_depth': 5, 'learning_rate': 0.01}
             >>> trainer.refit_model(ts='20241201_143022', params=custom_params)
+            >>> performance = trainer.transform(X, y, e, ts='20241201_143022')
         """
         if trial_index is None and params is None:
             raise ValueError("Either trial_index or params must be provided.")
@@ -797,25 +785,24 @@ class Train:
             )
         calibrator = calibrator.fit(train_proba, trainy)
 
-        new_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        new_model_dir = os.path.join(os.path.abspath(self.model_path), new_ts)
-        os.makedirs(new_model_dir, exist_ok=True)
+        cprint(f"[INFO] Replacing model and calibrator in {model_dir}", "cyan")
+        joblib.dump(model, os.path.join(model_dir, "model"))
+        joblib.dump(calibrator, os.path.join(model_dir, "calibrator"))
 
+        # Update artifacts in memory
         self._artifacts = {
             "fitting_set": fitting_set,
             "preprocessor": preprocessor,
             "model": model,
             "calibrator": calibrator,
             "tuner": tuner,
-            "refit_info": {
-                "original_ts": ts,
-                "trial_index": trial_index,
-                "params": selected_params,
-            },
         }
-        self.dump_artifacts()
-        self.ts = new_ts
-        cprint(f"[SUCCESS] Refitted model saved in path {new_model_dir}", "green")
-        cprint(f"[INFO] Use ts='{new_ts}' for transform()", "cyan")
+
+        cprint(f"[SUCCESS] Refitted model saved in path {model_dir}", "green")
+        cprint(
+            f"[INFO] Model and calibrator have been replaced. "
+            f"Parameters used: {selected_params}",
+            "cyan",
+        )
 
         return self
