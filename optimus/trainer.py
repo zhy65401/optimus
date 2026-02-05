@@ -141,8 +141,7 @@ class Train:
             >>> trainer = Train(model_path='./models', spec=spec)
 
             >>> # Advanced initialization with custom parameters
-            >>> trainer = Train(
-            ...     model_path='./models',
+            >>> trainer = Train
             ...     spec=spec,
             ...     model_type='XGB',
             ...     tune_method='BO',
